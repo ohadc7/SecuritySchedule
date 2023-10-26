@@ -1,13 +1,11 @@
 #!/proj/mislcad/areas/DAtools/tools/python/3.10.1/bin/python3
 
+# TTR == Time to rest
+
 # To do:
-# - Support people removed from people_list but exist in prev - should not be assigned
-# - Parametrize num of positions - debug 4
-#   Error: For day shift, no people available in night_db. Need to take from day_db (which are already assigned night shift)
 # - Allow planning for hour range (can help planning for Shabbat)
 # - Add check for current schedule for people not served
 # - Support list of people per position
-# - Add sanity check for people at prev_schedule, which are not on the people list
 # - Consider getting 2 or more prev schedules
 # - Add personal constraints
 
@@ -26,29 +24,34 @@ from openpyxl.worksheet.dimensions import ColumnDimension
 from openpyxl.styles               import Font
 from datetime                      import datetime, timedelta
 
+##################################################################################
 # Constants
+##################################################################################
+
 HOURS_IN_DAY     = 24
-TIME_TO_REST     = 6
 NUM_OF_POSITIONS = 5
 COLUMN_WIDTH     = 27
 LINE_WIDTH       = 10 + NUM_OF_POSITIONS*COLUMN_WIDTH
 
-# Actions:
-NONE = 0; SWAP = 1; RESIZE = 2
+night_hours_rd   = [1, 2, 3, 4]
+night_hours_wr   = [23, 0, 1, 2, 3, 4]
 
+##################################################################################
+# Enums
+##################################################################################
+
+# Actions
+NONE = 0; SWAP = 1; RESIZE = 2
 # Colors
 PINK = 0; BLUE = 1; GREEN  = 2; YELLOW = 3; PURPLE = 4
 
-night_hours = [1, 2, 3, 4]
-night_hours_rd = [1, 2, 3, 4]
-night_hours_wr = [23, 0, 1, 2, 3, 4]
+##################################################################################
+# Configurable default values
+##################################################################################
 
-# Set the random seed (make reproducible)
-SEED = 123
-
-# Parametrize
+SEED         = 1
 DAYS_TO_PLAN = 1
-
+TIME_TO_REST = 6
 
 ##################################################################################
 # Utils
@@ -73,32 +76,35 @@ def parse_arguments():
     parser.add_argument("--write",     action="store_true", help="Do write result to the XLS file")
     parser.add_argument("--days",      type=int,            help="Number of days to schedule")
     parser.add_argument("--positions", type=int,            help="Number of positions")
+    parser.add_argument("--ttr",       type=int,            help="Minimum time to rest between shifts")
 
     # Parse the command-line arguments
     args = parser.parse_args()
 
     # Access the parsed arguments
     xls_file_name = args.file_name
-    prev_name     = args.prev
-    next_name     = args.next
     do_write      = args.write
 
-    if args.days:      global DAYS_TO_PLAN;     DAYS_TO_PLAN = args.days
+    # Configure global variables
+    if args.days:      global DAYS_TO_PLAN;     DAYS_TO_PLAN     = args.days
     if args.positions: global NUM_OF_POSITIONS; NUM_OF_POSITIONS = args.positions
+    if args.seed:      global SEED;             SEED             = args.seed; random.seed(SEED)
+    if args.ttr:       global TIME_TO_REST;     TIME_TO_REST     = args.ttr
 
-    if args.seed: global SEED; SEED = args.seed
-    random.seed(SEED)
-
+    # Sanity checks
     if not os.path.exists(xls_file_name):                  error(f"File {xls_file_name} does not exist.")
     if do_write and not os.access(xls_file_name, os.W_OK): error(f"File {xls_file_name} is not writable.")
 
-    return prev_name, next_name, xls_file_name, do_write
+    return args.prev, args.next, xls_file_name, args.write
 
 ##################################################################################
+# Build DB from "List of people"
+# Each member is a list of 2:
+# member[0] = name
+# member[1] = time to rest
 def build_people_db(xls_file_name):
     # Get list of names from XLS
     names = extract_column_from_sheet(xls_file_name, "List of people", "People")
-    print(names)
 
     # Build people DB
     db = []
@@ -106,7 +112,7 @@ def build_people_db(xls_file_name):
         if type(name) is str:
             db.append([name[::-1], 0])
 
-    print(f"Found {len(db)} in List of people")
+    print(f"Found {len(db)} people in List of people: {get_names(db)}")
     return db
 
 ##################################################################################
@@ -141,9 +147,6 @@ def get_cfg(xls_file_name):
             error("In sheet "+sheet_name+", team size list unexpected length: " + len(position_cfg_team_size));
         position_cfg_team_size_int = []
         for member in position_cfg_team_size:
-            # FIXME: sanity (+add hour to error message)
-            #if member == 'nan' or member == 'NaN':
-            #    error(f"Empty cell in position {position}, hour FIXME")
             position_cfg_team_size_int.append(int(member))
         cfg_team_size.append(position_cfg_team_size)
 
@@ -194,10 +197,6 @@ def get_action(cfg_action, hour, team_size):
     else:
         error('Unrecognized text ' + swap_str)
 
-    # Sanity
-    #if do_swap and (team_size == 0):
-    #   error("For {:02d}:00, swap is required, but team size is not defined (0)".format(hour))
-
     return do_swap
 
 ##################################################################################
@@ -205,7 +204,6 @@ def get_action(cfg_action, hour, team_size):
 def choose_team(hour, night_db, day_db, team_size):
     team = []
     is_night = 1  if hour in night_hours_wr else 0
-
 
     for i in range(team_size):
         # Get list of available people
@@ -219,7 +217,7 @@ def choose_team(hour, night_db, day_db, team_size):
             # Is day
             people_available = get_available(night_db)
             if not people_available:
-                warning("For day shift, no people available in night_db. Need to take from day_db (which are already assigned night shift)")
+                #warning("For day shift, no people available in night_db. Need to take from day_db (which are already assigned night shift)")
                 people_available = get_available(day_db)
                 if not people_available:
                     error("No available people in neither night_db nor day_db")
@@ -228,24 +226,10 @@ def choose_team(hour, night_db, day_db, team_size):
         team.append(name)
 
         # Update DB before choosing next team member (avoid choosing the same member twice)
-        for person in night_db:
-            if person[0] == name:
-                person[1] = TIME_TO_REST + 1
-
-        for person in day_db:
-            if person[0] == name:
-                person[1] = TIME_TO_REST + 1
+        set_ttr(night_db, name)
+        set_ttr(day_db,   name)
 
     return team
-
-##################################################################################
-# Get available people from DB (with TTS == 0)
-def get_available(db):
-    available = []
-    for person in db:
-        if person[1] == 0:
-            available.append(person[0])
-    return available
 
 ##################################################################################
 # Resize team
@@ -259,11 +243,10 @@ def resize_team(hour, night_db, day_db, old_team, new_team_size):
 
     old_team_size = len(old_team)
     if old_team_size == new_team_size:
-        # FIXME: add error location (position, hour)
-        error(f"Resize: old_team_size == new_team_size == {old_team_size}")
+        error(f"Resize at {hour}:00: old_team_size == new_team_size == {old_team_size}")
 
     # Resize
-    if (new_team_size < old_team_size):
+    if new_team_size < old_team_size:
         # Reduce team size
         for i in range(old_team_size-new_team_size):
             random_index = random.randint(0, old_team_size-1)
@@ -301,36 +284,51 @@ def build_schedule(prev_schedule, night_db, day_db, cfg_action, cfg_team_size):
 
             # Even if there was no swap, the chosen team should get its TTS
             for name in team:
-                update_in_db(night_db, name)
-                update_in_db(day_db, name)
+                set_ttr(night_db, name)
+                set_ttr(day_db, name)
 
         # Update TTS
-        update_tts(night_db)
-        update_tts(day_db)
+        decrement_ttr(night_db)
+        decrement_ttr(day_db)
 
     return schedule
 ##################################################################################
 # DB utils
-def found_in_db(db, name):
-    found = 0
-    for person in db:
-        if person[0] == name:
-            found = 1
-    return found
 
-def update_in_db(db, name):
+# Check if name exists in DB
+def found_in_db(db, name):
+    return (name in get_names(db))
+
+# Set "time to rest"
+def set_ttr(db, name):
     for person in db:
         if person[0] == name:
             person[1] = TIME_TO_REST+1
 
+# Append person to DB
 def append_to_db(db, name):
     db.append([name, TIME_TO_REST + 1])
 
-def update_tts(db):
+# For each person, decrement the remaining "time to rest"
+def decrement_ttr(db):
     for person in db:
         if person[1] > 0:
             person[1] -= 1
 
+# Get list of names
+def get_names(db):
+    names = []
+    for person in db:
+        names.append(person[0])
+    return names
+
+# Get available people from DB (with TTS == 0)
+def get_available(db):
+    available = []
+    for person in db:
+        if person[1] == 0:
+            available.append(person[0])
+    return available
 
 ##################################################################################
 # Update DB with previous schedule
@@ -352,7 +350,7 @@ def update_db_with_prev_schedule(all_db, prev_schedule):
 
                 if is_night:
                     if found_in_db(night_db, name):
-                        update_in_db(night_db, name)
+                        set_ttr(night_db, name)
                     else:
                         append_to_db(night_db, name)
                         if found_in_db(day_db, name):
@@ -361,9 +359,9 @@ def update_db_with_prev_schedule(all_db, prev_schedule):
 
                 else:
                     if found_in_db(night_db, name):
-                        update_in_db(night_db, name)
+                        set_ttr(night_db, name)
                     elif found_in_db(day_db, name):
-                        update_in_db(day_db, name)
+                        set_ttr(day_db, name)
                     else:
                         append_to_db(day_db, name)
 
@@ -371,8 +369,8 @@ def update_db_with_prev_schedule(all_db, prev_schedule):
                 all_db = [item for item in all_db if item[0] != name]
 
         # Update TTS (for each hour, not for each position)
-        update_tts(night_db)
-        update_tts(day_db)
+        decrement_ttr(night_db)
+        decrement_ttr(day_db)
 
     # If people remain in all_db (didn't appear in prev_schedule), count them as day_db
     day_db = day_db + all_db
@@ -475,7 +473,7 @@ def color_column(worksheet, index, color):
                 cell.fill = fill
 
 ##################################################################################
-# Verify result
+# Check fairness
 def check_fairness(people_db, schedule):
     # Collects schedules
     #schedule = []
@@ -529,17 +527,18 @@ def verify(people_db, schedule):
                             error(f"Poor {name} did not get his {TIME_TO_REST} hour rest (served at {last_served_hour}, then at {hour})")
                     last_served[name] = hour
 
-def get_next_date(prev_name):
+##################################################################################
+# Get next date, based on previous date
+def get_next_date(prev_date_str):
     # Specify the format of the date string
     date_format = "%Y-%m-%d"
 
     # Parse the date string into a datetime object
-    prev_obj = datetime.strptime(prev_name, date_format)
+    prev_obj = datetime.strptime(prev_date_str, date_format)
     next_obj = prev_obj + timedelta(days=1)
-    next_name = next_obj.strftime(date_format)
+    next_date_str = next_obj.strftime(date_format)
 
-    return next_name
-
+    return next_date_str
 
 ##################################################################################
 # Main
@@ -558,9 +557,9 @@ def main():
     # Get previous schedule
     prev_schedule = get_prev_schedule(xls_file_name, prev_name, cfg_position_name)
     print_schedule(prev_schedule, cfg_position_name)
-
-    # Build schedule
     total_new_schedule = [] + prev_schedule # Important: using + to avoid copy by reference
+
+    # Build schedule for N days
     for day in range(DAYS_TO_PLAN):
 
         # Process previous schedule
