@@ -1,6 +1,7 @@
 #!/proj/mislcad/areas/DAtools/tools/python/3.10.1/bin/python3
 
 # To do:
+# - Support people removed from people_list but exist in prev - should not be assigned
 # - Parametrize num of positions - debug 4
 #   Error: For day shift, no people available in night_db. Need to take from day_db (which are already assigned night shift)
 # - Allow planning for hour range (can help planning for Shabbat)
@@ -15,6 +16,7 @@ import os
 import random
 import pandas as pd
 import argparse
+import math
 
 # For writing XLS file
 import openpyxl
@@ -30,9 +32,6 @@ TIME_TO_REST     = 6
 NUM_OF_POSITIONS = 5
 COLUMN_WIDTH     = 27
 LINE_WIDTH       = 10 + NUM_OF_POSITIONS*COLUMN_WIDTH
-
-# Generation mode
-FIFO_MODE = 1
 
 # Actions:
 NONE = 0; SWAP = 1; RESIZE = 2
@@ -57,6 +56,7 @@ DAYS_TO_PLAN = 1
 
 def print_delimiter(): print("#" * LINE_WIDTH)
 def error(message):    print('Error: '+message); exit(1)
+def warning(message):  print('Warning: '+message);
 
 ##################################################################################
 # Functions
@@ -71,8 +71,6 @@ def parse_arguments():
     parser.add_argument("--prev",      type=str,            help="Prev schedule sheet name (optional, default is today's date)")
     parser.add_argument("--next",      type=str,            help="Next schedule sheet name (optional, default is tomorrow's date)")
     parser.add_argument("--write",     action="store_true", help="Do write result to the XLS file")
-    parser.add_argument("--fifo",      action="store_true", help="Generate using FIFO mode")
-    parser.add_argument("--random",    action="store_true", help="Generate using RANDOM mode")
     parser.add_argument("--days",      type=int,            help="Number of days to schedule")
     parser.add_argument("--positions", type=int,            help="Number of positions")
 
@@ -84,12 +82,6 @@ def parse_arguments():
     prev_name     = args.prev
     next_name     = args.next
     do_write      = args.write
-    fifo_mode     = args.fifo
-    random_mode   = args.random
-
-    if     fifo_mode and     random_mode:  error("please choose either FIFO mode, or RANDOM mode, can't use both")
-    if not fifo_mode and not random_mode:  error("please choose either FIFO mode, or RANDOM mode")
-    global FIFO_MODE; FIFO_MODE = 1 if fifo_mode else 0;
 
     if args.days:      global DAYS_TO_PLAN;     DAYS_TO_PLAN = args.days
     if args.positions: global NUM_OF_POSITIONS; NUM_OF_POSITIONS = args.positions
@@ -106,11 +98,15 @@ def parse_arguments():
 def build_people_db(xls_file_name):
     # Get list of names from XLS
     names = extract_column_from_sheet(xls_file_name, "List of people", "People")
+    print(names)
 
     # Build people DB
     db = []
     for name in names:
-        db.append([name[::-1], 0])
+        if type(name) is str:
+            db.append([name[::-1], 0])
+
+    print(f"Found {len(db)} in List of people")
     return db
 
 ##################################################################################
@@ -206,60 +202,39 @@ def get_action(cfg_action, hour, team_size):
 
 ##################################################################################
 # Choose team
-def choose_team(hour, night_fifo, day_fifo, night_db, day_db, team_size):
+def choose_team(hour, night_db, day_db, team_size):
     team = []
     is_night = 1  if hour in night_hours_wr else 0
 
-    #print(f"Choose fifo (is_night = {is_night}), day_fifo = {day_fifo}")
-    if FIFO_MODE:
-        for i in range(team_size):
-            # Choose fifo
-            if is_night:
-                if len(day_fifo) > 0:
-                    fifo = day_fifo
-                else:
-                    # FIXME: allow override
-                    error(f"required to choose team for night watch but both none_fifo and day_fifo are empty")
-                    fifo = night_fifo
-            else:
-                # Is day
-                if len(night_fifo) > 0:
-                    fifo = night_fifo
-                else:
-                    fifo = day_fifo
 
-            name = fifo.pop(0)
-            team.append(name)
-            fifo.append(name)
-    else:
-        for i in range(team_size):
-            # Get list of available people
-            if is_night:
-                people_available = get_available(day_db)
-                if not people_available:
-                    people_available = get_available(night_db)
-                    if not people_available:
-                        error("No available people in neither night_db nor day_db")
-            else:
-                # Is day
+    for i in range(team_size):
+        # Get list of available people
+        if is_night:
+            people_available = get_available(day_db)
+            if not people_available:
                 people_available = get_available(night_db)
                 if not people_available:
-                    error("For day shift, no people available in night_db. Need to take from day_db (which are already assigned night shift)")
-                    people_available = get_available(day_db)
-                    if not people_available:
-                        error("No available people in neither night_db nor day_db")
+                    error("No available people in neither night_db nor day_db")
+        else:
+            # Is day
+            people_available = get_available(night_db)
+            if not people_available:
+                warning("For day shift, no people available in night_db. Need to take from day_db (which are already assigned night shift)")
+                people_available = get_available(day_db)
+                if not people_available:
+                    error("No available people in neither night_db nor day_db")
 
-            name = random.sample(people_available, 1)[0]
-            team.append(name)
+        name = random.sample(people_available, 1)[0]
+        team.append(name)
 
-            # Update DB before choosing next team member (avoid choosing the same member twice)
-            for person in night_db:
-                if person[0] == name:
-                    person[1] = TIME_TO_REST + 1
+        # Update DB before choosing next team member (avoid choosing the same member twice)
+        for person in night_db:
+            if person[0] == name:
+                person[1] = TIME_TO_REST + 1
 
-            for person in day_db:
-                if person[0] == name:
-                    person[1] = TIME_TO_REST + 1
+        for person in day_db:
+            if person[0] == name:
+                person[1] = TIME_TO_REST + 1
 
     return team
 
@@ -274,7 +249,7 @@ def get_available(db):
 
 ##################################################################################
 # Resize team
-def resize_team(hour, night_fifo, day_fifo, night_db, day_db, old_team, new_team_size):
+def resize_team(hour, night_db, day_db, old_team, new_team_size):
 
     if new_team_size == 0:
         return ["-"]
@@ -296,14 +271,14 @@ def resize_team(hour, night_fifo, day_fifo, night_db, day_db, old_team, new_team
     else:
         # Increase team size
         for i in range(new_team_size-old_team_size):
-            new_member = choose_team(hour, night_fifo, day_fifo, night_db, day_db, 1)
+            new_member = choose_team(hour, night_db, day_db, 1)
             new_team.append(new_member[0])
 
     return new_team
 
 ##################################################################################
 # Make the assignments
-def build_schedule(night_fifo, day_fifo, prev_schedule, night_db, day_db, cfg_action, cfg_team_size):
+def build_schedule(prev_schedule, night_db, day_db, cfg_action, cfg_team_size):
     schedule = [[] for _ in range(HOURS_IN_DAY)]
     teams    = [[] for _ in range(NUM_OF_POSITIONS)]
 
@@ -315,9 +290,9 @@ def build_schedule(night_fifo, day_fifo, prev_schedule, night_db, day_db, cfg_ac
             team      = teams[position]
 
             if action == SWAP:
-                team = choose_team(hour, night_fifo, day_fifo, night_db, day_db, team_size)
+                team = choose_team(hour, night_db, day_db, team_size)
             elif action == RESIZE:
-                team = resize_team(hour, night_fifo, day_fifo, night_db, day_db, team, team_size)
+                team = resize_team(hour, night_db, day_db, team, team_size)
             elif hour == 0:
                 team = prev_schedule[HOURS_IN_DAY-1][position]
 
@@ -362,6 +337,8 @@ def update_tts(db):
 def update_db_with_prev_schedule(all_db, prev_schedule):
     night_db = []
     day_db   = []
+    orig_db  = all_db[:] # Copy by value
+
     for hour in range(HOURS_IN_DAY):
         is_night = 1 if hour in night_hours_rd else 0
 
@@ -369,6 +346,10 @@ def update_db_with_prev_schedule(all_db, prev_schedule):
             team = prev_schedule[hour][position]
 
             for name in team:
+                # Ignore people that are not on the list
+                if not found_in_db(orig_db, name):
+                    continue
+
                 if is_night:
                     if found_in_db(night_db, name):
                         update_in_db(night_db, name)
@@ -397,43 +378,6 @@ def update_db_with_prev_schedule(all_db, prev_schedule):
     day_db = day_db + all_db
 
     return night_db, day_db
-
-##################################################################################
-# Update FIFO with previous schedule
-def update_fifo_with_prev_schedule(people_db, prev_schedule):
-    # First should be the people that didn't participate in prev
-    # Push all people to FIFO, will be removed if participated
-    none_fifo  = []
-    night_fifo = []
-    day_fifo   = []
-    for person in people_db:
-        none_fifo.append(person[0])
-
-    # Shuffle
-    none_fifo = random.sample(none_fifo, len(none_fifo))
-
-    # Add people that served in prev.
-    # For each such person, remove the previous occurrence from the FIFO, insert last
-    for hour in range(HOURS_IN_DAY):
-        for position in range(NUM_OF_POSITIONS):
-           team = prev_schedule[hour][position]
-           for name in team:
-                if name in none_fifo:
-                    # Remove name from FIFO
-                    none_fifo = [item for item in none_fifo if item != name]
-                    # Append at the end of the relevant fifo
-                    if hour in night_hours:
-                        if name not in night_fifo:
-                            night_fifo.append(name)
-                    else:
-                        if name not in night_fifo:
-                            day_fifo = [item for item in day_fifo if item != name]
-                            day_fifo.append(name)
-
-    # People that didn't work yesterday, count as day workers, and are taken before real day workers
-    day_fifo = none_fifo + day_fifo
-
-    return night_fifo, day_fifo
 
 ##################################################################################
 # Print schedule
@@ -547,13 +491,12 @@ def check_fairness(people_db, schedule):
     for hour in range(len(schedule)):
         for team in schedule[hour]:
             for name in team:
-                if name != 'nan':
+                if name != 'nan' and name in hours_served:
                     hours_served[name] += 1
 
     # Report
     print_delimiter()
-    mode = "FIFO_MODE" if FIFO_MODE else "RANDOM_MODE"
-    print(f"Check fairness ({mode})")
+    print(f"Check fairness")
     print_delimiter()
     for name in hours_served.keys():
         print(f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(hours_served[name]).ljust(4)}\t"+("*"*hours_served[name]))
@@ -577,12 +520,14 @@ def verify(people_db, schedule):
         #print(f"Verify ({hour}): {line}")
         for team in line:
             for name in team:
-                last_served_hour = last_served[name]
-                if last_served_hour != -1:
-                    diff = hour - last_served_hour - 1
-                    if diff < TIME_TO_REST and diff > 0:
-                        error(f"Poor {name} did not get his {TIME_TO_REST} hour rest (served at {last_served_hour}, then at {hour})")
-                last_served[name] = hour
+                # Ignore people that were removed from the list
+                if name in last_served:
+                    last_served_hour = last_served[name]
+                    if last_served_hour != -1:
+                        diff = hour - last_served_hour - 1
+                        if diff < TIME_TO_REST and diff > 0:
+                            error(f"Poor {name} did not get his {TIME_TO_REST} hour rest (served at {last_served_hour}, then at {hour})")
+                    last_served[name] = hour
 
 def get_next_date(prev_name):
     # Specify the format of the date string
@@ -616,18 +561,16 @@ def main():
 
     # Build schedule
     total_new_schedule = [] + prev_schedule # Important: using + to avoid copy by reference
-    print(f"Days to plan: {DAYS_TO_PLAN}")
-
     for day in range(DAYS_TO_PLAN):
 
         # Process previous schedule
         night_db, day_db = update_db_with_prev_schedule(people_db, prev_schedule)
-        night_fifo, day_fifo = update_fifo_with_prev_schedule(people_db, prev_schedule)
 
-        new_schedule = build_schedule(night_fifo, day_fifo, prev_schedule, night_db, day_db, cfg_action, cfg_team_size)
+        # Build next day schedule
+        new_schedule = build_schedule(prev_schedule, night_db, day_db, cfg_action, cfg_team_size)
         print_schedule(new_schedule, cfg_position_name)
 
-        # Get sheet name
+        # Get next sheet name
         next_name = get_next_date(prev_name)
         prev_name = next_name
 
