@@ -3,15 +3,11 @@
 # The algorithm is based on TTR
 # TTR == Time to rest
 
-# FIXME: allow by default, error for me
+# FIXME: debug fairness
+# ./scheduler.py Schedule_2.xlsx --prev "2023-10-25" --next "2023-10-26" --d 30 --pos 2 --seed 1 | tee log_2
+# See Benzi
 
-# In this release:
-# Improved fairness algorithm (choose lowest TTR)
-# Print list of unassigned at the bottom of the sheet, for manual fixing
-# -----------------------------------------------------------------------------------------------------------
-#
-#   Test on Schedule_2.xlsx
-#   ./scheduler.py Schedule_2.xlsx --prev "2023-10-25" --next "2023-10-26" --d 1 --pos 2 --seed 1| tee log
+# FIXME: errors should be warnings by default, error for developer (controlled with --arg)
 
 # Nadav:
 # #######
@@ -67,7 +63,8 @@ NUM_OF_POSITIONS = 5
 COLUMN_WIDTH     = 27
 LINE_WIDTH       = 10 + NUM_OF_POSITIONS*COLUMN_WIDTH
 
-# FIXME: REMOVE DUPLICATE
+# FIXME: either remove or add explanation.
+# Currently fails when using unique list, needs debug
 night_hours_rd   = [1, 2, 3, 4]
 night_hours_wr   = [23, 0, 1, 2, 3, 4]
 
@@ -167,7 +164,7 @@ def extract_column_from_sheet(xls_file_name, sheet_name, column_name):
 
 ##################################################################################
 # Get configurations
-# FIXME: consider:
+# Consider:
 #    CFG[position_index][hour]{action}        = action
 #    CFG[position_index][hour]{team_size}     = team_size
 #    CFG[position_index][hour]{position_name} = position_name (for debug/error messages)
@@ -294,10 +291,7 @@ def resize_team(hour, night_list, ttr_db, old_team, new_team_size):
             released = new_team.pop(random_index)
     else:
         # Increase team size
-        # FIXME: new_team = choose_team(hour, night_list, ttr_db, new_team_size-old_team_size)
-        for i in range(new_team_size-old_team_size):
-            new_member = choose_team(hour, night_list, ttr_db, 1)
-            new_team.append(new_member[0])
+        new_team = choose_team(hour, night_list, ttr_db, new_team_size-old_team_size)
 
     return new_team
 
@@ -327,8 +321,7 @@ def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size)
                 # They are not on the list, because they started the shift at "day hours" (23:00)
                 for name in team: night_list.append(name)
 
-            # FIXME:
-            # schedule[hour][position] = team
+            # Put the team in the schedule
             schedule[hour].append(team)
             teams[position] = team
 
@@ -563,7 +556,6 @@ def verify(db, schedule):
                     last_served_hour = last_served[name]
                     if last_served_hour != -1:
                         diff = hour - last_served_hour - 1
-                        # FIXME: make expected_ttr hour-dependent
                         expected_ttr = TTR_NIGHT if last_served_hour in night_hours_rd else TTR_DAY
                         if diff < expected_ttr and diff > 0:
                             error(f"Poor {name} did not get his {expected_ttr} hour rest (served at {last_served_hour}, then at {hour})")
@@ -572,8 +564,6 @@ def verify(db, schedule):
 ##################################################################################
 # Check who wasn't assigned
 def check_for_idle(db, schedule):
-    print_delimiter()
-    print(f"Check who wasn't assigned")
 
     # Init participated
     participated = {}
@@ -590,6 +580,7 @@ def check_for_idle(db, schedule):
     # Check who didn't participate
     not_assigned = [item for item in participated.keys() if participated[item] == 0]
     if not_assigned:
+        print_delimiter()
         print(f"Not assigned: {not_assigned}")
 
     return
