@@ -1,13 +1,46 @@
 #!/proj/mislcad/areas/DAtools/tools/python/3.10.1/bin/python3
 
+# The algorithm is based on TTR
 # TTR == Time to rest
 
-# To do:
+# FIXME: allow by default, error for me
+
+# In this release:
+# Improved fairness algorithm (choose lowest TTR)
+# Print list of unassigned at the bottom of the sheet, for manual fixing
+# -----------------------------------------------------------------------------------------------------------
+#
+#   Test on Schedule_2.xlsx
+#   ./scheduler.py Schedule_2.xlsx --prev "2023-10-25" --next "2023-10-26" --d 1 --pos 2 --seed 1| tee log
+
+# Nadav:
+# #######
+# Analyze fairness (add average, more weight to nights, OR, better, night start, day stars, two separate columns)
+# Improve verify() function - currently checks that TTR is observed, check also that now two nights in a row
+# Add randomization for get_lowest_ttr() - randomize people with the same TTR - check if improves fairness
+#
+# Consider:
+# - Weight per position, per hour
+# - Read from XLS, same as team_size or action
+# - Use weight instead of TTR in set_ttr()
+# Flusk? Pygame?
+# Make object-oriented:
+#   Class ttr_db
+#   Class schedule
+#   Other?
+
+# Later
+# - Consider dying output by fairness, manual fix
+# - Consider: MAX_TTR = MIN_TTR * 2 - 1
+# - Consider: post-processing to fix fairness
+# - Consider making the TTR part of the CFG (add column)
+# - Another way - add column 'weight' fo position CFG
+#   Can split position into positions (night, day), each with different weight
 # - Allow planning for hour range (can help planning for Shabbat)
-# - Add check for current schedule for people not served
 # - Support list of people per position
-# - Consider getting 2 or more prev schedules
 # - Add personal constraints
+# - Improve XLS parsing (read once, all sheets, then parse)
+# - Run fairness check on range of sheets, possibly without generating
 
 import sys
 import os
@@ -15,6 +48,7 @@ import random
 import pandas as pd
 import argparse
 import math
+import copy
 
 # For writing XLS file
 import openpyxl
@@ -33,6 +67,7 @@ NUM_OF_POSITIONS = 5
 COLUMN_WIDTH     = 27
 LINE_WIDTH       = 10 + NUM_OF_POSITIONS*COLUMN_WIDTH
 
+# FIXME: REMOVE DUPLICATE
 night_hours_rd   = [1, 2, 3, 4]
 night_hours_wr   = [23, 0, 1, 2, 3, 4]
 
@@ -51,7 +86,8 @@ PINK = 0; BLUE = 1; GREEN  = 2; YELLOW = 3; PURPLE = 4
 
 SEED         = 1
 DAYS_TO_PLAN = 1
-TIME_TO_REST = 6
+TTR_NIGHT    = 9
+TTR_DAY      = 4
 
 ##################################################################################
 # Utils
@@ -76,7 +112,8 @@ def parse_arguments():
     parser.add_argument("--write",     action="store_true", help="Do write result to the XLS file")
     parser.add_argument("--days",      type=int,            help="Number of days to schedule")
     parser.add_argument("--positions", type=int,            help="Number of positions")
-    parser.add_argument("--ttr",       type=int,            help="Minimum time to rest between shifts")
+    parser.add_argument("--ttrn",      type=int,            help="Minimum time to rest after NIGHT shift")
+    parser.add_argument("--ttrd",      type=int,            help="Minimum time to rest after DAY shift")
 
     # Parse the command-line arguments
     args = parser.parse_args()
@@ -89,7 +126,8 @@ def parse_arguments():
     if args.days:      global DAYS_TO_PLAN;     DAYS_TO_PLAN     = args.days
     if args.positions: global NUM_OF_POSITIONS; NUM_OF_POSITIONS = args.positions
     if args.seed:      global SEED;             SEED             = args.seed; random.seed(SEED)
-    if args.ttr:       global TIME_TO_REST;     TIME_TO_REST     = args.ttr
+    if args.ttrn:      global TTR_NIGHT;        TTR_NIGHT        = args.ttrn
+    if args.ttrd:      global TTR_DAY;          TTR_DAY          = args.ttrd
 
     # Sanity checks
     if not os.path.exists(xls_file_name):                  error(f"File {xls_file_name} does not exist.")
@@ -99,20 +137,19 @@ def parse_arguments():
 
 ##################################################################################
 # Build DB from "List of people"
-# Each member is a list of 2:
-# member[0] = name
-# member[1] = time to rest
+# Key:   name
+# Value: remaining time to rest (TTR) - set to 0
 def build_people_db(xls_file_name):
     # Get list of names from XLS
     names = extract_column_from_sheet(xls_file_name, "List of people", "People")
 
     # Build people DB
-    db = []
+    db = {}
     for name in names:
         if type(name) is str:
-            db.append([name[::-1], 0])
+            db[name[::-1]] = 0
 
-    print(f"Found {len(db)} people in List of people: {get_names(db)}")
+    print(f"Found {len(db.keys())} people in List of people: {db.keys()}")
     return db
 
 ##################################################################################
@@ -130,6 +167,11 @@ def extract_column_from_sheet(xls_file_name, sheet_name, column_name):
 
 ##################################################################################
 # Get configurations
+# FIXME: consider:
+#    CFG[position_index][hour]{action}        = action
+#    CFG[position_index][hour]{team_size}     = team_size
+#    CFG[position_index][hour]{position_name} = position_name (for debug/error messages)
+#    CFG[position_index][hour]{weight}        = weight
 def get_cfg(xls_file_name):
     cfg_action = []
     for position in range(NUM_OF_POSITIONS):
@@ -201,42 +243,41 @@ def get_action(cfg_action, hour, team_size):
 
 ##################################################################################
 # Choose team
-def choose_team(hour, night_db, day_db, team_size):
+def choose_team(hour, night_list, ttr_db, team_size):
+    #print(f"Choose team for hour {hour}\nNight_list: {night_list}")# \nDB: {ttr_db}")
     team = []
-    is_night = 1  if hour in night_hours_wr else 0
+    if hour in night_hours_wr: is_night = 1
+    else:                      is_night = 0
 
     for i in range(team_size):
-        # Get list of available people
+        name = get_lowest_ttr(ttr_db)
         if is_night:
-            people_available = get_available(day_db)
-            if not people_available:
-                people_available = get_available(night_db)
-                if not people_available:
-                    error("No available people in neither night_db nor day_db")
-        else:
-            # Is day
-            people_available = get_available(night_db)
-            if not people_available:
-                #warning("For day shift, no people available in night_db. Need to take from day_db (which are already assigned night shift)")
-                people_available = get_available(day_db)
-                if not people_available:
-                    error("No available people in neither night_db nor day_db")
+            # Using for (instead of while)to avoid endless loop
+            # Possibly no choice but to take from night watchers
+            for i in range(len(ttr_db)):
+                if name not in night_list:
+                    break
+                name = get_lowest_ttr(ttr_db, i+1)
 
-        name = random.sample(people_available, 1)[0]
+            # Check fairness
+            if ttr_db[name] > 0:
+                error(f"Chosen {name} with TTR {ttr_db[name]}\nNight list: {night_list}\nSorted: {dict(sorted(ttr_db.items(), key=lambda item: item[1]))}")
+            if name in night_list:
+                error(f"At {hour}:00, must take night watcher")
+
+        set_ttr(hour, name, ttr_db)
         team.append(name)
 
-        # Update DB before choosing next team member (avoid choosing the same member twice)
-        set_ttr(night_db, name)
-        set_ttr(day_db,   name)
+    #print(f"Chosen team: {team}")
 
     return team
 
 ##################################################################################
 # Resize team
-def resize_team(hour, night_db, day_db, old_team, new_team_size):
+def resize_team(hour, night_list, ttr_db, old_team, new_team_size):
 
     if new_team_size == 0:
-        return ["-"]
+        return [""]
 
     # Create new team list (to avoid modifying the previous hour value, team is passed by reference)
     new_team = old_team.copy()
@@ -253,16 +294,20 @@ def resize_team(hour, night_db, day_db, old_team, new_team_size):
             released = new_team.pop(random_index)
     else:
         # Increase team size
+        # FIXME: new_team = choose_team(hour, night_list, ttr_db, new_team_size-old_team_size)
         for i in range(new_team_size-old_team_size):
-            new_member = choose_team(hour, night_db, day_db, 1)
+            new_member = choose_team(hour, night_list, ttr_db, 1)
             new_team.append(new_member[0])
 
     return new_team
 
 ##################################################################################
 # Make the assignments
-def build_schedule(prev_schedule, night_db, day_db, cfg_action, cfg_team_size):
+def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size):
+
     schedule = [[] for _ in range(HOURS_IN_DAY)]
+    # Stores the current team at the specific position
+    # If no action, the same team continues to the next hour
     teams    = [[] for _ in range(NUM_OF_POSITIONS)]
 
     for hour in range(HOURS_IN_DAY):
@@ -273,109 +318,99 @@ def build_schedule(prev_schedule, night_db, day_db, cfg_action, cfg_team_size):
             team      = teams[position]
 
             if action == SWAP:
-                team = choose_team(hour, night_db, day_db, team_size)
+                team = choose_team(hour, night_list, ttr_db, team_size)
             elif action == RESIZE:
-                team = resize_team(hour, night_db, day_db, team, team_size)
+                team = resize_team(hour, night_list, ttr_db, team, team_size)
             elif hour == 0:
                 team = prev_schedule[HOURS_IN_DAY-1][position]
+                # Note: these people should be recorded as night watchers
+                # They are not on the list, because they started the shift at "day hours" (23:00)
+                for name in team: night_list.append(name)
 
+            # FIXME:
+            # schedule[hour][position] = team
             schedule[hour].append(team)
             teams[position] = team
 
             # Even if there was no swap, the chosen team should get its TTS
-            for name in team:
-                set_ttr(night_db, name)
-                set_ttr(day_db, name)
+            for name in team: set_ttr(hour, name, ttr_db)
 
-        # Update TTS
-        decrement_ttr(night_db)
-        decrement_ttr(day_db)
+        # Update TTS (per hour)
+        decrement_ttr(ttr_db)
 
     return schedule
 ##################################################################################
 # DB utils
 
-# Check if name exists in DB
-def found_in_db(db, name):
-    return (name in get_names(db))
-
-# Set "time to rest"
-def set_ttr(db, name):
-    for person in db:
-        if person[0] == name:
-            person[1] = TIME_TO_REST+1
-
-# Append person to DB
-def append_to_db(db, name):
-    db.append([name, TIME_TO_REST + 1])
+# Set TTR for name
+def set_ttr(hour, name, db):
+    if hour in night_hours_rd: db[name] = TTR_NIGHT+1
+    else:                      db[name] = TTR_DAY+1
 
 # For each person, decrement the remaining "time to rest"
 def decrement_ttr(db):
-    for person in db:
-        if person[1] > 0:
-            person[1] -= 1
+    for name in db:
+        db[name] -= 1
 
-# Get list of names
-def get_names(db):
-    names = []
-    for person in db:
-        names.append(person[0])
-    return names
-
-# Get available people from DB (with TTS == 0)
+# Get available people from DB (with TTR == 0)
 def get_available(db):
     available = []
-    for person in db:
-        if person[1] == 0:
-            available.append(person[0])
+    for name, ttr in db.items():
+        if ttr == 0:
+            available.append(name)
     return available
 
+# Print DB
+def print_db(header, db):
+    print(header)
+    for name in db:
+        print(f"{name.ljust(COLUMN_WIDTH)}{db[name]}")
+
+# Get the name with lowest TTR value
+# Offset allows to skip N lowest values
+def get_lowest_ttr(db, offset=0):
+
+    # Sort the dictionary by values in ascending order
+    # To sort in descending order, add `, reverse=True` to the sorted function
+    # FIXME: shuffle the names with the same value
+    sorted_db = dict(sorted(db.items(), key=lambda item: item[1]))
+    #print(f"Sorted DB: {sorted_db}")
+
+    # Create an iterator over the dictionary items
+    iter_items = iter(sorted_db.items())
+
+    # Skip offset
+    for i in range(offset+1): item = next(iter_items)
+
+    # Get name
+    name = item[0]
+    return name
+
 ##################################################################################
-# Update DB with previous schedule
-def update_db_with_prev_schedule(all_db, prev_schedule):
-    night_db = []
-    day_db   = []
-    orig_db  = all_db[:] # Copy by value
+# Update TTR DB with previous schedule
+# Result: DB, list
+def update_db_with_prev_schedule(valid_names, db, schedule):
+    night_list = []
 
     for hour in range(HOURS_IN_DAY):
         is_night = 1 if hour in night_hours_rd else 0
 
         for position in range(NUM_OF_POSITIONS):
-            team = prev_schedule[hour][position]
+            team = schedule[hour][position]
 
             for name in team:
                 # Ignore people that are not on the list
-                if not found_in_db(orig_db, name):
-                    continue
+                if not name in valid_names: continue
 
+                # Note: "+1" is needed to cancel the following decrement of the whole DB
+                set_ttr(hour, name, db)
                 if is_night:
-                    if found_in_db(night_db, name):
-                        set_ttr(night_db, name)
-                    else:
-                        append_to_db(night_db, name)
-                        if found_in_db(day_db, name):
-                            # Remove from day_db
-                            day_db = [item for item in day_db if item[0] != name]
-
-                else:
-                    if found_in_db(night_db, name):
-                        set_ttr(night_db, name)
-                    elif found_in_db(day_db, name):
-                        set_ttr(day_db, name)
-                    else:
-                        append_to_db(day_db, name)
-
-                # Remove name from original db
-                all_db = [item for item in all_db if item[0] != name]
+                    if name not in night_list: night_list.append(name)
 
         # Update TTS (for each hour, not for each position)
-        decrement_ttr(night_db)
-        decrement_ttr(day_db)
+        decrement_ttr(db)
 
-    # If people remain in all_db (didn't appear in prev_schedule), count them as day_db
-    day_db = day_db + all_db
-
-    return night_db, day_db
+    return night_list
 
 ##################################################################################
 # Print schedule
@@ -402,7 +437,7 @@ def write_schedule_to_xls(xls_file_name, schedule, sheet_name, cfg_position_name
     # Open an existing Excel file
     workbook = openpyxl.load_workbook(xls_file_name)
 
-    # Get sheet name for output (only if not provided by the user
+    # Get sheet name for output (only if not provided by the user)
     if not sheet_name:
         sheet_name = str(datetime.date.today() + datetime.timedelta(days=1))
 
@@ -474,16 +509,12 @@ def color_column(worksheet, index, color):
 
 ##################################################################################
 # Check fairness
-def check_fairness(people_db, schedule):
-    # Collects schedules
-    #schedule = []
-    #for hour in range(HOURS_IN_DAY):
-    #    schedule.append(old_schedule[hour] + new_schedule[hour])
+def check_fairness(db, schedule):
 
     # Init hours_served
     hours_served = {}
-    for person in people_db:
-        hours_served[person[0]] = 0
+    for name in db:
+        hours_served[name] = 0
 
     # Calculate hours_served
     for hour in range(len(schedule)):
@@ -496,21 +527,30 @@ def check_fairness(people_db, schedule):
     print_delimiter()
     print(f"Check fairness")
     print_delimiter()
-    for name in hours_served.keys():
+    for name in hours_served:
         print(f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(hours_served[name]).ljust(4)}\t"+("*"*hours_served[name]))
+
+    # Calculate average
+    total = sum(value for value in hours_served.values())
+    average = int(total / len(hours_served))
+
+    # Print average
+    print_delimiter()
+    print(f"Average: {str(average).ljust(COLUMN_WIDTH-3)} served: {str(average).ljust(4)}\t" + ("*" * average))
+    print_delimiter()
 
     return 1
 
 ##################################################################################
 # Verify result
-def verify(people_db, schedule):
+def verify(db, schedule):
     print_delimiter()
     print(f"Verify total ({len(schedule)} lines)")
 
     # Init last_served
     last_served = {}
-    for person in people_db:
-        last_served[person[0]] = -1
+    for name in db:
+        last_served[name] = -1
 
     # Check schedule
     for hour in range(len(schedule)):
@@ -523,9 +563,36 @@ def verify(people_db, schedule):
                     last_served_hour = last_served[name]
                     if last_served_hour != -1:
                         diff = hour - last_served_hour - 1
-                        if diff < TIME_TO_REST and diff > 0:
-                            error(f"Poor {name} did not get his {TIME_TO_REST} hour rest (served at {last_served_hour}, then at {hour})")
+                        # FIXME: make expected_ttr hour-dependent
+                        expected_ttr = TTR_NIGHT if last_served_hour in night_hours_rd else TTR_DAY
+                        if diff < expected_ttr and diff > 0:
+                            error(f"Poor {name} did not get his {expected_ttr} hour rest (served at {last_served_hour}, then at {hour})")
                     last_served[name] = hour
+
+##################################################################################
+# Check who wasn't assigned
+def check_for_idle(db, schedule):
+    print_delimiter()
+    print(f"Check who wasn't assigned")
+
+    # Init participated
+    participated = {}
+    for name in db:
+        participated[name] = 0
+
+    # Collect data from schedule
+    for hour in range(len(schedule)):
+        line = schedule[hour]
+        for team in line:
+            for name in team:
+                participated[name] = 1
+
+    # Check who didn't participate
+    not_assigned = [item for item in participated.keys() if participated[item] == 0]
+    if not_assigned:
+        print(f"Not assigned: {not_assigned}")
+
+    return
 
 ##################################################################################
 # Get next date, based on previous date
@@ -548,8 +615,10 @@ def main():
     # Parse script arguments
     prev_name, next_name, xls_file_name, do_write = parse_arguments()
 
-    # Build people DB
-    people_db = build_people_db(xls_file_name)
+    # Build TTR DB {name} -> {time to rest}
+    ttr_db = build_people_db(xls_file_name)
+    print(f"Orig DB length = {len(ttr_db)}")
+    valid_names = ttr_db.keys()
 
     # Get configurations
     cfg_action, cfg_team_size, cfg_position_name = get_cfg(xls_file_name)
@@ -563,11 +632,12 @@ def main():
     for day in range(DAYS_TO_PLAN):
 
         # Process previous schedule
-        night_db, day_db = update_db_with_prev_schedule(people_db, prev_schedule)
+        prev_night_list = update_db_with_prev_schedule(valid_names, ttr_db, prev_schedule)
 
         # Build next day schedule
-        new_schedule = build_schedule(prev_schedule, night_db, day_db, cfg_action, cfg_team_size)
+        new_schedule = build_schedule(prev_schedule, prev_night_list, ttr_db, cfg_action, cfg_team_size)
         print_schedule(new_schedule, cfg_position_name)
+        check_for_idle(ttr_db, new_schedule)
 
         # Get next sheet name
         next_name = get_next_date(prev_name)
@@ -577,11 +647,11 @@ def main():
         if do_write: write_schedule_to_xls(xls_file_name, new_schedule, next_name, cfg_position_name)
 
         total_new_schedule = total_new_schedule + new_schedule
-        prev_schedule = new_schedule
+        prev_schedule      = new_schedule
 
     # Run checks
-    verify(people_db, total_new_schedule)
-    check_fairness(people_db, total_new_schedule)
+    verify        (ttr_db, total_new_schedule)
+    check_fairness(ttr_db, total_new_schedule)
 
 
 ##################################################################################
