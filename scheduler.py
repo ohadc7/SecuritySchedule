@@ -5,6 +5,7 @@
 
 # FIXME: debug fairness
 # ./scheduler.py Schedule_2.xlsx --prev "2023-10-25" --next "2023-10-26" --d 30 --pos 2 --seed 1 | tee log_2
+# python scheduler.py Schedule.xlsx --prev "2023-10-25" --d 7 --pos 5
 # See Benzi
 
 # FIXME: errors should be warnings by default, error for developer (controlled with --arg)
@@ -310,7 +311,8 @@ def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size)
             team_size = cfg_team_size[position][hour]
             action    = get_action(cfg_action[position], hour, team_size)
             team      = teams[position]
-
+            # Shuffling in order to make it more fair
+            ttr_db = shuffle_and_sort_same_ttr_values(ttr_db)
             if action == SWAP:
                 team = choose_team(hour, night_list, ttr_db, team_size)
             elif action == RESIZE:
@@ -378,6 +380,19 @@ def get_lowest_ttr(db, offset=0):
     # Get name
     name = item[0]
     return name
+
+# Suffling all personal with same ttr value
+def shuffle_and_sort_same_ttr_values(db):
+    # Sort the dictionary by values
+    sorted_dict = dict(sorted(db.items(), key=lambda item: item[1]))
+    # Shuffle keys
+    keys = list(sorted_dict.keys())
+    random.shuffle(keys)
+    # creating new
+    shuffled_dict = {key: sorted_dict[key] for key in keys}
+    # Sorting again
+    shuffled_dict = dict(sorted(shuffled_dict.items(), key=lambda item: item[1]))
+    return shuffled_dict
 
 ##################################################################################
 # Update TTR DB with previous schedule
@@ -531,8 +546,21 @@ def check_fairness(db, schedule):
     print_delimiter()
     print(f"Average: {str(average).ljust(COLUMN_WIDTH-3)} served: {str(average).ljust(4)}\t" + ("*" * average))
     print_delimiter()
-
+    # Adding standard_deviation
+    standard_deviation(hours_served, average)
+    print_delimiter()
     return 1
+
+def standard_deviation(hours_served, average):
+    #in order to calculate the standart deviation you need to calculate the sum of the
+    #differences between all the people and the average to the power of 2 and then divide that by the number of people and then square root all of that
+    sum_of_delta_hours = 0
+    number_of_people = len(hours_served)
+    for name in hours_served:
+        sum_of_delta_hours += math.pow(average - hours_served[name], 2)
+    standard_deviation_value = math.sqrt(sum_of_delta_hours/number_of_people)
+    print(f"Standard Deviation:" + " " + str(round(standard_deviation_value, 4)).ljust(28) + ("*" * (round(standard_deviation_value))))
+    return standard_deviation_value
 
 ##################################################################################
 # Verify result
@@ -641,7 +669,7 @@ def main():
         prev_schedule      = new_schedule
 
     # Run checks
-    verify        (ttr_db, total_new_schedule)
+    verify(ttr_db, total_new_schedule)
     check_fairness(ttr_db, total_new_schedule)
 
 
