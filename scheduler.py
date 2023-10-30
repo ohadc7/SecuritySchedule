@@ -26,6 +26,10 @@
 #   Class schedule
 #   Other?
 
+# Idea, because of the shuffling in the algorithm you can run it a few times and get different results.
+# we could simply run it 50 times in a loop and take the schedule with the best standard deviation.
+
+
 # Later
 # - Consider dying output by fairness, manual fix
 # - Consider: MAX_TTR = MIN_TTR * 2 - 1
@@ -140,7 +144,6 @@ def parse_arguments():
 def build_people_db(xls_file_name):
     # Get list of names from XLS
     names = extract_column_from_sheet(xls_file_name, "List of people", "People")
-
     # Build people DB
     db = {}
     for name in names:
@@ -299,7 +302,6 @@ def resize_team(hour, night_list, ttr_db, old_team, new_team_size):
 ##################################################################################
 # Make the assignments
 def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size):
-
     schedule = [[] for _ in range(HOURS_IN_DAY)]
     # Stores the current team at the specific position
     # If no action, the same team continues to the next hour
@@ -321,12 +323,11 @@ def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size)
                 team = prev_schedule[HOURS_IN_DAY-1][position]
                 # Note: these people should be recorded as night watchers
                 # They are not on the list, because they started the shift at "day hours" (23:00)
-                for name in team: night_list.append(name)
-
+                for name in team:
+                    night_list.append(name)
             # Put the team in the schedule
             schedule[hour].append(team)
             teams[position] = team
-
             # Even if there was no swap, the chosen team should get its TTS
             for name in team: set_ttr(hour, name, ttr_db)
 
@@ -381,7 +382,7 @@ def get_lowest_ttr(db, offset=0):
     name = item[0]
     return name
 
-# Suffling all personal with same ttr value
+# Shuffling all personal with same ttr value
 def shuffle_and_sort_same_ttr_values(db):
     # Sort the dictionary by values
     sorted_dict = dict(sorted(db.items(), key=lambda item: item[1]))
@@ -399,9 +400,11 @@ def shuffle_and_sort_same_ttr_values(db):
 # Result: DB, list
 def update_db_with_prev_schedule(valid_names, db, schedule):
     night_list = []
-
     for hour in range(HOURS_IN_DAY):
-        is_night = 1 if hour in night_hours_rd else 0
+        if hour in night_hours_rd:
+            is_night = 1
+        else:
+            is_night = 0
 
         for position in range(NUM_OF_POSITIONS):
             team = schedule[hour][position]
@@ -413,7 +416,8 @@ def update_db_with_prev_schedule(valid_names, db, schedule):
                 # Note: "+1" is needed to cancel the following decrement of the whole DB
                 set_ttr(hour, name, db)
                 if is_night:
-                    if name not in night_list: night_list.append(name)
+                    if name not in night_list:
+                        night_list.append(name)
 
         # Update TTS (for each hour, not for each position)
         decrement_ttr(db)
@@ -519,32 +523,47 @@ def color_column(worksheet, index, color):
 # Check fairness
 def check_fairness(db, schedule):
 
-    # Init hours_served
+    # Init hours_served, night_hours_served
+    night_hours_served = {}
     hours_served = {}
     for name in db:
+        night_hours_served[name] = 0
         hours_served[name] = 0
 
-    # Calculate hours_served
+    # Calculate hours_served, night_hours_served
+    # The hour variable runs from 0 to len(schedule),
+    # modulo 24 the hour variable will give the actual hour value in the day so you can know
+    # if the hour is in the night
     for hour in range(len(schedule)):
         for team in schedule[hour]:
             for name in team:
+                if hour % 24 in night_hours_rd:
+                    night_hours_served[name] += 1
                 if name != 'nan' and name in hours_served:
                     hours_served[name] += 1
-
     # Report
     print_delimiter()
     print(f"Check fairness")
     print_delimiter()
-    for name in hours_served:
-        print(f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(hours_served[name]).ljust(4)}\t"+("*"*hours_served[name]))
 
-    # Calculate average
+    # Calculating the most hours served to print it in line
+    name_of_the_most_hours_served = max(hours_served, key=lambda k: hours_served[k])
+    most_hours_served = hours_served[name_of_the_most_hours_served]
+
+    for name in hours_served:
+        print(f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(hours_served[name]).ljust(4)}\t{('*' * hours_served[name]).ljust(most_hours_served+5)}"
+              f" Night hours served: {str(night_hours_served[name]).ljust(4)}" + ('*'*night_hours_served[name]))
+
+    # Calculate average, night average
     total = sum(value for value in hours_served.values())
     average = int(total / len(hours_served))
-
+    night_hours_total = sum(value2 for value2 in night_hours_served.values())
+    night_hours_average = int(night_hours_total/len(night_hours_served))
     # Print average
+
     print_delimiter()
-    print(f"Average: {str(average).ljust(COLUMN_WIDTH-3)} served: {str(average).ljust(4)}\t" + ("*" * average))
+    print(f"Average: {str(average).ljust(COLUMN_WIDTH-3)} served: {str(average).ljust(4)}\t" + ("*" * average).ljust(most_hours_served+5) + f" Night hours served:"
+             f" {str(night_hours_average).ljust(4)}" + "*" * night_hours_average)
     print_delimiter()
     # Adding standard_deviation
     standard_deviation(hours_served, average)
@@ -552,8 +571,9 @@ def check_fairness(db, schedule):
     return 1
 
 def standard_deviation(hours_served, average):
-    #in order to calculate the standart deviation you need to calculate the sum of the
-    #differences between all the people and the average to the power of 2 and then divide that by the number of people and then square root all of that
+    # In order to calculate the standard deviation you need to calculate the sum of the
+    # differences between all the people and the average to the power of 2 and then divide
+    # that by the number of people and then square root all of that
     sum_of_delta_hours = 0
     number_of_people = len(hours_served)
     for name in hours_served:
@@ -630,7 +650,6 @@ def get_next_date(prev_date_str):
 # Main
 ##################################################################################
 def main():
-
     # Parse script arguments
     prev_name, next_name, xls_file_name, do_write = parse_arguments()
 
@@ -657,7 +676,6 @@ def main():
         new_schedule = build_schedule(prev_schedule, prev_night_list, ttr_db, cfg_action, cfg_team_size)
         print_schedule(new_schedule, cfg_position_name)
         check_for_idle(ttr_db, new_schedule)
-
         # Get next sheet name
         next_name = get_next_date(prev_name)
         prev_name = next_name
