@@ -291,11 +291,11 @@ def resize_team(hour, night_list, ttr_db, old_team, new_team_size):
     if new_team_size < old_team_size:
         # Reduce team size
         for i in range(old_team_size-new_team_size):
-            random_index = random.randint(0, old_team_size-1)
+            random_index = random.randint(0, len(new_team)-1)
             released = new_team.pop(random_index)
     else:
         # Increase team size
-        new_team = choose_team(hour, night_list, ttr_db, new_team_size-old_team_size)
+        new_team += choose_team(hour, night_list, ttr_db, new_team_size-old_team_size)
 
     return new_team
 
@@ -340,6 +340,15 @@ def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size)
 
 # Set TTR for name
 def set_ttr(hour, name, db):
+    # Note: need to handle a special case where Moshe starts shift at night, continues at day
+    # For example, shift of 03:00 - 07:00
+    # We detect such case when the previous TTR value ==  TTR_NIGHT+1
+    # In this case, restore NIGHT_TTR+1
+    if db[name] == TTR_NIGHT:
+        db[name] += 1
+        return
+
+    # Normal case
     if hour in night_hours_rd: db[name] = TTR_NIGHT+1
     else:                      db[name] = TTR_DAY+1
 
