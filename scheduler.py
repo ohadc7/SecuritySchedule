@@ -12,6 +12,8 @@
 
 # Nadav:
 # #######
+# run many times until the person who is with the worst score the most has the list amount of score (served * 1 + night_served*1.5)
+# change slightly ttr_values and see if it changes something
 # Analyze fairness (add average, more weight to nights, OR, better, night start, day stars, two separate columns)
 # Improve verify() function - currently checks that TTR is observed, check also that now two nights in a row
 # Add randomization for get_lowest_ttr() - randomize people with the same TTR - check if improves fairness
@@ -157,7 +159,7 @@ def build_people_db(xls_file_name):
 # Extract column from sheet
 def extract_column_from_sheet(xls_file_name, sheet_name, column_name):
     df = pd.read_excel(xls_file_name, sheet_name=sheet_name)
-
+    # You can add this and there will be not "nan" but for now out code can deal with NaN (na_filter=False to line 162)
     # Check if the column exists in the DataFrame
     if column_name in df.columns:
         # Access and print the contents of the column
@@ -166,6 +168,94 @@ def extract_column_from_sheet(xls_file_name, sheet_name, column_name):
     else:
         error(f"Column '{column_name}' not found in '{sheet_name}'.")
 
+# Turning type [13/2 15:00-16:00] to hours in schedule
+def parse_hours(time_of_inactivity, date_one_day_behind):
+    current_date = get_one_day_ahead(date_one_day_behind)
+    hour_values = []
+    current_day, current_month = map(int, current_date.split('/'))
+    if time_of_inactivity == time_of_inactivity:
+        # Splitting into different dates and times
+        date_time_intervals = time_of_inactivity.split(',')
+        for date_time_range in date_time_intervals:
+            # Splitting to date and time range
+            if (len(date_time_range) < 8):
+                day, month = map(int, date_time_range.split('/'))
+                if date_time_range == current_date:
+                    for i in range(HOURS_IN_DAY):
+                        hour_values.append(i)
+                        index = i
+                else:
+                    for i in range(HOURS_IN_DAY):
+                        hour_values.append(HOURS_IN_DAY*(day-current_day)+ i)
+                        index = i
+            else:
+                date, time_range = date_time_range.split()
+                # Splitting to day and month (I did not add an year, i hope the war will end by then...)
+                day, month = map(int, date.split('/'))
+                # Splitting time
+                start_time, end_time = time_range.split('-')
+                # Splitting minutes and hour (we do not support minutes currently)
+                start_hour, start_minute = map(int, start_time.split(':'))
+                end_hour, end_minute = map(int, end_time.split(':'))
+
+                # Adding the hours to the hours value
+                # Supporting just getting 11/5
+                if day == current_day:
+                    for i in range(end_hour-start_hour):
+                        hour_values.append(start_hour+i)
+                else:
+                    for i in range(end_hour-start_hour):
+                        hour_values.append(HOURS_IN_DAY + start_hour + i)
+        return hour_values
+
+    # Just so there will be a return of an empty list
+    return hour_values
+
+# Taking the inactive personnel in the xlsx file and turning it into a dict for later use
+def extract_inactive_personnel(xls_file_name, date_one_day_behind):
+    # Init all the relevant data from the file
+    index_of_time_of_inactivity = 0
+    names = extract_column_from_sheet(xls_file_name, "List of people", "People")
+    time_of_inactivity = extract_column_from_sheet(xls_file_name, "List of people", "Time they cant guard")
+    inactive_personnel = {}
+    for name in names:
+        # Transforming into string in case of a number input
+        if type(name) is str:
+            inactive_personnel[name] = []
+            # Checking in the value is NaN (NaN != Nan)
+            if time_of_inactivity[index_of_time_of_inactivity] != time_of_inactivity[index_of_time_of_inactivity]:
+                pass
+            else:
+                inactive_personnel[name].append(time_of_inactivity[index_of_time_of_inactivity])
+            index_of_time_of_inactivity += 1
+
+    for name in inactive_personnel:
+        if inactive_personnel[name] != []:
+            # Adding the the name the value that is a list with the hours they cant serve
+            inactive_personnel[name] = parse_hours(inactive_personnel[name][0], date_one_day_behind)
+    return inactive_personnel
+
+# Getting a date like "23 - 1 - 25" and turning it into "26/1", for the parse_hours function
+def get_one_day_ahead(date_one_day_behind):
+    year, month, day = map(int, date_one_day_behind.split("-"))
+    day += 1
+
+    # Make a dict with the number of days in each month
+    days_in_month = {1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 6: 30, 7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31}
+
+    # Checking if a month has passed
+    if day > days_in_month[month]:
+        day = 1
+        month += 1
+
+    # Checking if an year have passed, i hope not...
+    if month > 12:
+        month = 1
+        year += 1
+
+    # Putting in format
+    current_date = f"{day:02d}/{month:02d}"
+    return current_date
 ##################################################################################
 # Get configurations
 # Consider:
@@ -207,7 +297,6 @@ def get_prev_schedule(xls_file_name, sheet_name, cfg_position_names):
     prev_schedule = []
     if not sheet_name:
         sheet_name = str(datetime.date.today())
-
     position_teams = []
     for position in range(NUM_OF_POSITIONS):
         position_name = cfg_position_names[position][::-1]
@@ -244,27 +333,45 @@ def get_action(cfg_action, hour, team_size):
 
 ##################################################################################
 # Choose team
-def choose_team(hour, night_list, ttr_db, team_size):
+def choose_team(hour, night_list, ttr_db, team_size, inactive_personnel):
     #print(f"Choose team for hour {hour}\nNight_list: {night_list}")# \nDB: {ttr_db}")
     team = []
-    if hour in night_hours_wr: is_night = 1
-    else:                      is_night = 0
+    if hour in night_hours_wr:
+        is_night = 1
+    else:
+        is_night = 0
 
     for i in range(team_size):
         name = get_lowest_ttr(ttr_db)
-        if is_night:
+        if is_night == 1 or hour in inactive_personnel[name[::-1]]:
             # Using for (instead of while)to avoid endless loop
             # Possibly no choice but to take from night watchers
-            for i in range(len(ttr_db)):
-                if name not in night_list:
-                    break
-                name = get_lowest_ttr(ttr_db, i+1)
+            # Checks if its night and that the personnel is active
+            # The else checks just if the personnel is active(in the day hours)
+            if is_night == 1:
+                for j in range(len(ttr_db)):
+                    # Checks both if the hour is overlapping with a known inactive hour of this person
+                    # and is the person on the night list
+                    if name not in night_list:
+                        if hour not in inactive_personnel[name[::-1]]:
+                            break
+                    name = get_lowest_ttr(ttr_db, j + 1)
+            else:
+                # Checks if the hour is overlapping with a known inactive hour of this person
+                if hour in inactive_personnel[name[::-1]]:
+                    for k in range(len(ttr_db)):
+                        if hour not in inactive_personnel[name[::-1]]:
+                            break
+                        name = get_lowest_ttr(ttr_db, k + 1)
 
             # Check fairness
             if ttr_db[name] > 0:
                 error(f"Chosen {name} with TTR {ttr_db[name]}\nNight list: {night_list}\nSorted: {dict(sorted(ttr_db.items(), key=lambda item: item[1]))}")
-            if name in night_list:
-                error(f"At {hour}:00, must take night watcher")
+
+            # Added if because of a change in the code, we only need to run this "if" if its night time so added a check
+            if is_night == 1:
+                if name in night_list:
+                    error(f"At {hour}:00, must take night watcher")
 
         set_ttr(hour, name, ttr_db)
         team.append(name)
@@ -275,7 +382,7 @@ def choose_team(hour, night_list, ttr_db, team_size):
 
 ##################################################################################
 # Resize team
-def resize_team(hour, night_list, ttr_db, old_team, new_team_size):
+def resize_team(hour, night_list, ttr_db, old_team, new_team_size, inactive_personnel):
 
     if new_team_size == 0:
         return [""]
@@ -295,13 +402,13 @@ def resize_team(hour, night_list, ttr_db, old_team, new_team_size):
             released = new_team.pop(random_index)
     else:
         # Increase team size
-        new_team += choose_team(hour, night_list, ttr_db, new_team_size-old_team_size)
+        new_team += choose_team(hour, night_list, ttr_db, new_team_size-old_team_size, inactive_personnel)
 
     return new_team
 
 ##################################################################################
 # Make the assignments
-def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size):
+def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size, inactive_personnel):
     schedule = [[] for _ in range(HOURS_IN_DAY)]
     # Stores the current team at the specific position
     # If no action, the same team continues to the next hour
@@ -316,9 +423,9 @@ def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size)
             # Shuffling in order to make it more fair
             ttr_db = shuffle_and_sort_same_ttr_values(ttr_db)
             if action == SWAP:
-                team = choose_team(hour, night_list, ttr_db, team_size)
+                team = choose_team(hour, night_list, ttr_db, team_size, inactive_personnel)
             elif action == RESIZE:
-                team = resize_team(hour, night_list, ttr_db, team, team_size)
+                team = resize_team(hour, night_list, ttr_db, team, team_size, inactive_personnel)
             elif hour == 0:
                 team = prev_schedule[HOURS_IN_DAY-1][position]
                 # Note: these people should be recorded as night watchers
@@ -532,10 +639,12 @@ def color_column(worksheet, index, color):
 # Check fairness
 def check_fairness(db, schedule):
 
-    # Init hours_served, night_hours_served
+    # Init hours_served, night_hours_served, score_value(score = (hours_served-night_hours_served) + (night_hours_served)*1.5
+    score_value = {}
     night_hours_served = {}
     hours_served = {}
     for name in db:
+        score_value[name] = 0
         night_hours_served[name] = 0
         hours_served[name] = 0
 
@@ -577,6 +686,7 @@ def check_fairness(db, schedule):
     # Adding standard_deviation
     standard_deviation(hours_served, average)
     print_delimiter()
+
     return 1
 
 def standard_deviation(hours_served, average):
@@ -662,6 +772,9 @@ def main():
     # Parse script arguments
     prev_name, next_name, xls_file_name, do_write = parse_arguments()
 
+    # Get inactive personnel dict
+    inactive_personnel = extract_inactive_personnel(xls_file_name, prev_name)
+
     # Build TTR DB {name} -> {time to rest}
     ttr_db = build_people_db(xls_file_name)
     print(f"Orig DB length = {len(ttr_db)}")
@@ -669,11 +782,11 @@ def main():
 
     # Get configurations
     cfg_action, cfg_team_size, cfg_position_name = get_cfg(xls_file_name)
-
     # Get previous schedule
     prev_schedule = get_prev_schedule(xls_file_name, prev_name, cfg_position_name)
     print_schedule(prev_schedule, cfg_position_name)
     total_new_schedule = [] + prev_schedule # Important: using + to avoid copy by reference
+
 
     # Build schedule for N days
     for day in range(DAYS_TO_PLAN):
@@ -682,7 +795,7 @@ def main():
         prev_night_list = update_db_with_prev_schedule(valid_names, ttr_db, prev_schedule)
 
         # Build next day schedule
-        new_schedule = build_schedule(prev_schedule, prev_night_list, ttr_db, cfg_action, cfg_team_size)
+        new_schedule = build_schedule(prev_schedule, prev_night_list, ttr_db, cfg_action, cfg_team_size, inactive_personnel)
         print_schedule(new_schedule, cfg_position_name)
         check_for_idle(ttr_db, new_schedule)
         # Get next sheet name
