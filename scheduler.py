@@ -12,7 +12,8 @@
 
 # Nadav:
 # #######
-# run many times until the person who is with the worst score the most has the list amount of score (served * 1 + night_served*1.5)
+# Run many times until the person who is with the worst score the most has the list amount
+# of score (served * 1 + night_served*1.5)
 # change slightly ttr_values and see if it changes something
 # Analyze fairness (add average, more weight to nights, OR, better, night start, day stars, two separate columns)
 # Improve verify() function - currently checks that TTR is observed, check also that now two nights in a row
@@ -173,39 +174,51 @@ def parse_hours(time_of_inactivity, date_one_day_behind):
     current_date = get_one_day_ahead(date_one_day_behind)
     hour_values = []
     current_day, current_month = map(int, current_date.split('/'))
+    # Checking the time_of_inactivity is not NaN because it breaks the system and says its empty. with (NaN != NaN)
     if time_of_inactivity == time_of_inactivity:
-        # Splitting into different dates and times
-        date_time_intervals = time_of_inactivity.split(',')
-        for date_time_range in date_time_intervals:
-            # Splitting to date and time range
-            if (len(date_time_range) < 8):
-                day, month = map(int, date_time_range.split('/'))
-                if date_time_range == current_date:
-                    for i in range(HOURS_IN_DAY):
-                        hour_values.append(i)
-                        index = i
-                else:
-                    for i in range(HOURS_IN_DAY):
-                        hour_values.append(HOURS_IN_DAY*(day-current_day)+ i)
-                        index = i
+        # If its a single date, it changes the type of the variable to date so it is way easier to just add a dot.
+        if '.' in time_of_inactivity:
+            time_of_inactivity = time_of_inactivity[0:len(time_of_inactivity)-1]
+            day, month = map(int, time_of_inactivity.split('/'))
+            if time_of_inactivity == current_date:
+                for i in range(HOURS_IN_DAY):
+                    hour_values.append(i)
             else:
-                date, time_range = date_time_range.split()
-                # Splitting to day and month (I did not add an year, i hope the war will end by then...)
-                day, month = map(int, date.split('/'))
-                # Splitting time
-                start_time, end_time = time_range.split('-')
-                # Splitting minutes and hour (we do not support minutes currently)
-                start_hour, start_minute = map(int, start_time.split(':'))
-                end_hour, end_minute = map(int, end_time.split(':'))
+                for i in range(HOURS_IN_DAY):
+                    hour_values.append(HOURS_IN_DAY * (day - current_day) + i)
 
-                # Adding the hours to the hours value
-                # Supporting just getting 11/5
-                if day == current_day:
-                    for i in range(end_hour-start_hour):
-                        hour_values.append(start_hour+i)
+        # In any other case that there is more then one date or a date with an hour range
+        else:
+            # Splitting into different dates and times
+            date_time_intervals = time_of_inactivity.split(',')
+            for date_time_range in date_time_intervals:
+                # Splitting to date and time range
+                if (len(date_time_range) < 8):
+                    day, month = map(int, date_time_range.split('/'))
+                    if date_time_range == current_date:
+                        for i in range(HOURS_IN_DAY):
+                            hour_values.append(i)
+                    else:
+                        for i in range(HOURS_IN_DAY):
+                            hour_values.append(HOURS_IN_DAY*(day-current_day)+ i)
                 else:
-                    for i in range(end_hour-start_hour):
-                        hour_values.append(HOURS_IN_DAY + start_hour + i)
+                    date, time_range = date_time_range.split()
+                    # Splitting to day and month (I did not add an year, i hope the war will end by then...)
+                    day, month = map(int, date.split('/'))
+                    # Splitting time
+                    start_time, end_time = time_range.split('-')
+                    # Splitting minutes and hour (we do not support minutes currently)
+                    start_hour, start_minute = map(int, start_time.split(':'))
+                    end_hour, end_minute = map(int, end_time.split(':'))
+
+                    # Adding the hours to the hours value
+                    # Supporting just getting 11/5
+                    if day == current_day:
+                        for i in range(end_hour-start_hour):
+                            hour_values.append(start_hour+i)
+                    else:
+                        for i in range(end_hour-start_hour):
+                            hour_values.append(HOURS_IN_DAY + start_hour + i)
         return hour_values
 
     # Just so there will be a return of an empty list
@@ -216,7 +229,7 @@ def extract_inactive_personnel(xls_file_name, date_one_day_behind):
     # Init all the relevant data from the file
     index_of_time_of_inactivity = 0
     names = extract_column_from_sheet(xls_file_name, "List of people", "People")
-    time_of_inactivity = extract_column_from_sheet(xls_file_name, "List of people", "Time they cant guard")
+    time_of_inactivity = extract_column_from_sheet(xls_file_name, "List of people", "Time off")
     inactive_personnel = {}
     for name in names:
         # Transforming into string in case of a number input
@@ -333,17 +346,20 @@ def get_action(cfg_action, hour, team_size):
 
 ##################################################################################
 # Choose team
-def choose_team(hour, night_list, ttr_db, team_size, inactive_personnel):
+def choose_team(hour, night_list, ttr_db, team_size, inactive_personnel, day_from_beginning):
     #print(f"Choose team for hour {hour}\nNight_list: {night_list}")# \nDB: {ttr_db}")
     team = []
     if hour in night_hours_wr:
         is_night = 1
     else:
         is_night = 0
-
+    # The real hour is because the inactive_personnel
+    # dict does not have a day counter its just keeps going so if its a day ahead it will be [24,25,26...]
+    # So in order to know we need to find the real_hour
+    real_hour = day_from_beginning*24+hour
     for i in range(team_size):
         name = get_lowest_ttr(ttr_db)
-        if is_night == 1 or hour in inactive_personnel[name[::-1]]:
+        if is_night == 1 or real_hour in inactive_personnel[name[::-1]]:
             # Using for (instead of while)to avoid endless loop
             # Possibly no choice but to take from night watchers
             # Checks if its night and that the personnel is active
@@ -353,14 +369,14 @@ def choose_team(hour, night_list, ttr_db, team_size, inactive_personnel):
                     # Checks both if the hour is overlapping with a known inactive hour of this person
                     # and is the person on the night list
                     if name not in night_list:
-                        if hour not in inactive_personnel[name[::-1]]:
+                        if real_hour not in inactive_personnel[name[::-1]]:
                             break
                     name = get_lowest_ttr(ttr_db, j + 1)
             else:
                 # Checks if the hour is overlapping with a known inactive hour of this person
-                if hour in inactive_personnel[name[::-1]]:
+                if real_hour in inactive_personnel[name[::-1]]:
                     for k in range(len(ttr_db)):
-                        if hour not in inactive_personnel[name[::-1]]:
+                        if real_hour not in inactive_personnel[name[::-1]]:
                             break
                         name = get_lowest_ttr(ttr_db, k + 1)
 
@@ -372,7 +388,6 @@ def choose_team(hour, night_list, ttr_db, team_size, inactive_personnel):
             if is_night == 1:
                 if name in night_list:
                     error(f"At {hour}:00, must take night watcher")
-
         set_ttr(hour, name, ttr_db)
         team.append(name)
 
@@ -382,7 +397,7 @@ def choose_team(hour, night_list, ttr_db, team_size, inactive_personnel):
 
 ##################################################################################
 # Resize team
-def resize_team(hour, night_list, ttr_db, old_team, new_team_size, inactive_personnel):
+def resize_team(hour, night_list, ttr_db, old_team, new_team_size, inactive_personnel, day_from_beginning):
 
     if new_team_size == 0:
         return [""]
@@ -402,13 +417,13 @@ def resize_team(hour, night_list, ttr_db, old_team, new_team_size, inactive_pers
             released = new_team.pop(random_index)
     else:
         # Increase team size
-        new_team += choose_team(hour, night_list, ttr_db, new_team_size-old_team_size, inactive_personnel)
+        new_team += choose_team(hour, night_list, ttr_db, new_team_size-old_team_size, inactive_personnel, day_from_beginning)
 
     return new_team
 
 ##################################################################################
 # Make the assignments
-def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size, inactive_personnel):
+def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size, inactive_personnel, day_from_beginning):
     schedule = [[] for _ in range(HOURS_IN_DAY)]
     # Stores the current team at the specific position
     # If no action, the same team continues to the next hour
@@ -423,9 +438,9 @@ def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size,
             # Shuffling in order to make it more fair
             ttr_db = shuffle_and_sort_same_ttr_values(ttr_db)
             if action == SWAP:
-                team = choose_team(hour, night_list, ttr_db, team_size, inactive_personnel)
+                team = choose_team(hour, night_list, ttr_db, team_size, inactive_personnel, day_from_beginning)
             elif action == RESIZE:
-                team = resize_team(hour, night_list, ttr_db, team, team_size, inactive_personnel)
+                team = resize_team(hour, night_list, ttr_db, team, team_size, inactive_personnel, day_from_beginning)
             elif hour == 0:
                 team = prev_schedule[HOURS_IN_DAY-1][position]
                 # Note: these people should be recorded as night watchers
@@ -774,7 +789,6 @@ def main():
 
     # Get inactive personnel dict
     inactive_personnel = extract_inactive_personnel(xls_file_name, prev_name)
-
     # Build TTR DB {name} -> {time to rest}
     ttr_db = build_people_db(xls_file_name)
     print(f"Orig DB length = {len(ttr_db)}")
@@ -795,7 +809,7 @@ def main():
         prev_night_list = update_db_with_prev_schedule(valid_names, ttr_db, prev_schedule)
 
         # Build next day schedule
-        new_schedule = build_schedule(prev_schedule, prev_night_list, ttr_db, cfg_action, cfg_team_size, inactive_personnel)
+        new_schedule = build_schedule(prev_schedule, prev_night_list, ttr_db, cfg_action, cfg_team_size, inactive_personnel, day)
         print_schedule(new_schedule, cfg_position_name)
         check_for_idle(ttr_db, new_schedule)
         # Get next sheet name
