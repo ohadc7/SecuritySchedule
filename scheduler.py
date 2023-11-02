@@ -229,7 +229,10 @@ def extract_inactive_personnel(xls_file_name, date_one_day_behind):
     # Init all the relevant data from the file
     index_of_time_of_inactivity = 0
     names = extract_column_from_sheet(xls_file_name, "List of people", "People")
-    time_of_inactivity = extract_column_from_sheet(xls_file_name, "List of people", "Time off")
+    try:
+        time_of_inactivity = extract_column_from_sheet(xls_file_name, "List of people", "Time off")
+    except:
+        error("Please add column 'Time off' next to the People column, at 'List of people' sheet")
     inactive_personnel = {}
     for name in names:
         # Transforming into string in case of a number input
