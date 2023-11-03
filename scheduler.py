@@ -560,7 +560,9 @@ def update_db_with_prev_schedule(valid_names, db, schedule):
 
 ##################################################################################
 # Print schedule
-def print_schedule(schedule, cfg_position_name):
+def print_schedule(schedule, cfg_position_name, schedule_name):
+    print_delimiter()
+    print(schedule_name)
     print_delimiter()
     header = "Hour\t"
     for position in range(NUM_OF_POSITIONS):
@@ -764,9 +766,9 @@ def check_for_idle(db, schedule):
 
     # Check who didn't participate
     not_assigned = [item for item in participated.keys() if participated[item] == 0]
-    if not_assigned:
-        print_delimiter()
-        print(f"Not assigned: {not_assigned}")
+    # if not_assigned:
+    #     print_delimiter()
+    #     print(f"Not assigned: {not_assigned}")
 
     return
 
@@ -801,7 +803,7 @@ def main():
     cfg_action, cfg_team_size, cfg_position_name = get_cfg(xls_file_name)
     # Get previous schedule
     prev_schedule = get_prev_schedule(xls_file_name, prev_name, cfg_position_name)
-    print_schedule(prev_schedule, cfg_position_name)
+    print_schedule(prev_schedule, cfg_position_name, prev_name)
     total_new_schedule = [] + prev_schedule # Important: using + to avoid copy by reference
 
 
@@ -813,11 +815,11 @@ def main():
 
         # Build next day schedule
         new_schedule = build_schedule(prev_schedule, prev_night_list, ttr_db, cfg_action, cfg_team_size, inactive_personnel, day)
-        print_schedule(new_schedule, cfg_position_name)
         check_for_idle(ttr_db, new_schedule)
         # Get next sheet name
         next_name = get_next_date(prev_name)
         prev_name = next_name
+        print_schedule(new_schedule, cfg_position_name, next_name)
 
         # Write to XLS file
         if do_write: write_schedule_to_xls(xls_file_name, new_schedule, next_name, cfg_position_name)
