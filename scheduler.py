@@ -200,7 +200,7 @@ def parse_hours(time_of_inactivity, date_one_day_behind):
                             hour_values.append(i)
                     else:
                         for i in range(HOURS_IN_DAY):
-                            hour_values.append(HOURS_IN_DAY*(day-current_day)+ i)
+                            hour_values.append(HOURS_IN_DAY*(day-current_day) + i)
                 else:
                     date, time_range = date_time_range.split()
                     # Splitting to day and month (I did not add an year, i hope the war will end by then...)
@@ -218,7 +218,7 @@ def parse_hours(time_of_inactivity, date_one_day_behind):
                             hour_values.append(start_hour+i)
                     else:
                         for i in range(end_hour-start_hour):
-                            hour_values.append(HOURS_IN_DAY + start_hour + i)
+                            hour_values.append(HOURS_IN_DAY * (day-current_day) + start_hour + i)
         return hour_values
 
     # Just so there will be a return of an empty list
