@@ -1,0 +1,5 @@
+# No XLS update, only output to STDOUT:
+./scheduler.py Example.xlsx --prev "2023-11-03" --days 7 --positions 2 
+
+# With XLS update:
+./scheduler.py Example.xlsx --prev "2023-11-03" --days 7 --positions 2 --write
