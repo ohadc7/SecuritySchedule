@@ -59,6 +59,5 @@ We will make an effort to address your requests, but no response time is guarant
 The project is 100% volunteering and we do it in our spare time
 Hope you find it useful 😊
 
-Lena Barzilai
-Lena.barzilai@gmail.com
-0544524290
+Lena Barzilai: Lena.barzilai@gmail.com
+Nadav Ben David: Pythonlolxd@gmail.com
