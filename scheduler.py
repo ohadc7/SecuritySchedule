@@ -1,23 +1,35 @@
-#!/proj/mislcad/areas/DAtools/tools/python/3.10.1/bin/python3
 
 # The algorithm is based on TTR
 # TTR == Time to rest
 
-# FIXME: debug fairness
-# ./scheduler.py Schedule_2.xlsx --prev "2023-10-25" --next "2023-10-26" --d 30 --pos 2 --seed 1 | tee log_2
-# python scheduler.py Schedule.xlsx --prev "2023-10-25" --d 7 --pos 5
-# See Benzi
-
-# FIXME: errors should be warnings by default, error for developer (controlled with --arg)
+# TODO:
+#
+# - Make the following arguments mandatory:
+#   --prev
+#   --days
+#   --positions
+#
+# - Improve randomization:
+#   Couples issue: when a couple is chosen, they get the same TTR,
+#   so with a high probability they will be chosen again together.
+#   Consider, for very low TTRs, to take also the next 1-2 levels
+# - Verification:
+#   Add check for two nights in a row
+#
+# - Fairness check, add how many times was assigned a person to a position,
+#   - Per person
+#   - Per position
+#
+# - Code cleanup
+#   Replace get_one_day_ahead() with get_next_date()
+#   Remove unused functions
 
 # Nadav:
 # #######
 # Run many times until the person who is with the worst score the most has the list amount
 # of score (served * 1 + night_served*1.5)
 # change slightly ttr_values and see if it changes something
-# Analyze fairness (add average, more weight to nights, OR, better, night start, day stars, two separate columns)
 # Improve verify() function - currently checks that TTR is observed, check also that now two nights in a row
-# Add randomization for get_lowest_ttr() - randomize people with the same TTR - check if improves fairness
 #
 # Consider:
 # - Weight per position, per hour
@@ -32,9 +44,9 @@
 # Idea, because of the shuffling in the algorithm you can run it a few times and get different results.
 # we could simply run it 50 times in a loop and take the schedule with the best standard deviation.
 
-
 # Later
-# - Consider dying output by fairness, manual fix
+
+# - Errors should be warnings by default, error for developer (controlled with --arg)
 # - Consider: MAX_TTR = MIN_TTR * 2 - 1
 # - Consider: post-processing to fix fairness
 # - Consider making the TTR part of the CFG (add column)
@@ -42,7 +54,6 @@
 #   Can split position into positions (night, day), each with different weight
 # - Allow planning for hour range (can help planning for Shabbat)
 # - Support list of people per position
-# - Add personal constraints
 # - Improve XLS parsing (read once, all sheets, then parse)
 # - Run fairness check on range of sheets, possibly without generating
 
@@ -438,8 +449,7 @@ def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size,
             team_size = cfg_team_size[position][hour]
             action    = get_action(cfg_action[position], hour, team_size)
             team      = teams[position]
-            # Shuffling in order to make it more fair
-            ttr_db = shuffle_and_sort_same_ttr_values(ttr_db)
+
             if action == SWAP:
                 team = choose_team(hour, night_list, ttr_db, team_size, inactive_personnel, day_from_beginning)
             elif action == RESIZE:
@@ -512,8 +522,22 @@ def get_lowest_ttr(db, offset=0):
     # Skip offset
     for i in range(offset+1): item = next(iter_items)
 
-    # Get name
-    name = item[0]
+    # Get lowest available TTR
+    lowest_ttr = item[1]
+    all_names_with_lowest_ttr = [item[0]]
+
+    # Get all items with the same TTR
+    for i in range(offset+1, len(db.keys())):
+        item = next(iter_items)
+        if item[1] != lowest_ttr:
+            break
+        else:
+            all_names_with_lowest_ttr.append(item[0])
+
+
+    # Choose random name
+    name = random.choice(all_names_with_lowest_ttr)
+    #print(f"Sorted all_names_with_lowest_ttr: {all_names_with_lowest_ttr}, chosen: {name}, offset: {offset}")
     return name
 
 # Shuffling all personal with same ttr value
@@ -786,6 +810,12 @@ def get_next_date(prev_date_str):
     return next_date_str
 
 ##################################################################################
+# Print information that can be usefule for debug
+def print_debug_info():
+    print(f"Current seed: {SEED}")
+    print_delimiter()
+
+##################################################################################
 # Main
 ##################################################################################
 def main():
@@ -830,6 +860,7 @@ def main():
     # Run checks
     verify(ttr_db, total_new_schedule)
     check_fairness(ttr_db, total_new_schedule)
+    print_debug_info()
 
 
 ##################################################################################
