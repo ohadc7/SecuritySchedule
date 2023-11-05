@@ -816,6 +816,29 @@ def print_debug_info():
     print_delimiter()
 
 ##################################################################################
+# Check reappearance of teams
+def check_teams(schedule):
+    teams_db = {}
+    for hour in range(len(schedule)):
+        for position in range(NUM_OF_POSITIONS):
+            team = schedule[hour][position]
+            # Skip empty teams
+            if not team:
+                continue
+
+            # Team is a list - sort and turn into string
+            sorted_team_str = ",".join(sorted(team))
+            if sorted_team_str in teams_db.keys():
+                teams_db[sorted_team_str] += 1
+            else:
+                teams_db[sorted_team_str] = 1
+
+    # Sort by number of occurance
+    sorted_teams_db = dict(sorted(teams_db.items(), key=lambda item: item[1]))
+    print(f"Teams: {sorted_teams_db}")
+
+
+##################################################################################
 # Main
 ##################################################################################
 def main():
@@ -859,6 +882,7 @@ def main():
 
     # Run checks
     verify(ttr_db, total_new_schedule)
+    check_teams(total_new_schedule)
     check_fairness(ttr_db, total_new_schedule)
     print_debug_info()
 
