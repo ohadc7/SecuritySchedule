@@ -105,6 +105,8 @@ DAYS_TO_PLAN = 1
 TTR_NIGHT    = 9
 TTR_DAY      = 4
 
+PERSONAL_SCHEDULE = 0
+
 ##################################################################################
 # Utils
 ##################################################################################
@@ -130,6 +132,7 @@ def parse_arguments():
     parser.add_argument("--positions", type=int,            help="Number of positions")
     parser.add_argument("--ttrn",      type=int,            help="Minimum time to rest after NIGHT shift")
     parser.add_argument("--ttrd",      type=int,            help="Minimum time to rest after DAY shift")
+    parser.add_argument("--personal",  action="store_true", help="Print personal schedule")
 
     # Parse the command-line arguments
     args = parser.parse_args()
@@ -139,11 +142,12 @@ def parse_arguments():
     do_write      = args.write
 
     # Configure global variables
-    if args.days:      global DAYS_TO_PLAN;     DAYS_TO_PLAN     = args.days
-    if args.positions: global NUM_OF_POSITIONS; NUM_OF_POSITIONS = args.positions
-    if args.seed:      global SEED;             SEED             = args.seed; random.seed(SEED)
-    if args.ttrn:      global TTR_NIGHT;        TTR_NIGHT        = args.ttrn
-    if args.ttrd:      global TTR_DAY;          TTR_DAY          = args.ttrd
+    if args.days:      global DAYS_TO_PLAN;      DAYS_TO_PLAN      = args.days
+    if args.positions: global NUM_OF_POSITIONS;  NUM_OF_POSITIONS  = args.positions
+    if args.seed:      global SEED;              SEED              = args.seed; random.seed(SEED)
+    if args.ttrn:      global TTR_NIGHT;         TTR_NIGHT         = args.ttrn
+    if args.ttrd:      global TTR_DAY;           TTR_DAY           = args.ttrd
+    if args.personal:  global PERSONAL_SCHEDULE; PERSONAL_SCHEDULE = args.personal;
 
     # Sanity checks
     if not os.path.exists(xls_file_name):                  error(f"File {xls_file_name} does not exist.")
@@ -810,6 +814,32 @@ def get_next_date(prev_date_str):
     return next_date_str
 
 ##################################################################################
+# User request: print personal information
+def print_personal_info(schedule, date):
+    personal_schedule = {}
+
+    # Note: skipping the previous schedule
+    for hour in range(len(schedule)):
+        for position in range(NUM_OF_POSITIONS):
+            team = schedule[hour][position]
+            # Skip empty teams
+            if not team:
+                continue
+
+            # Update personal schedule for each team member
+            for name in team:
+                if name in personal_schedule.keys():
+                    personal_schedule[name] += f", {hour}:00"
+                else:
+                    personal_schedule[name] = f", {hour}:00"
+
+    print_delimiter()
+    print(f"Personal schedule for {date}")
+    for name in personal_schedule.keys():
+        print(f"{name}: {personal_schedule[name]}")
+
+
+##################################################################################
 # Print information that can be usefule for debug
 def print_debug_info():
     print(f"Current seed: {SEED}")
@@ -873,6 +903,8 @@ def main():
         next_name = get_next_date(prev_name)
         prev_name = next_name
         print_schedule(new_schedule, cfg_position_name, next_name)
+        if PERSONAL_SCHEDULE:
+            print_personal_info(new_schedule, next_name)
 
         # Write to XLS file
         if do_write: write_schedule_to_xls(xls_file_name, new_schedule, next_name, cfg_position_name)
