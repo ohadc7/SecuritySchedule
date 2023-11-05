@@ -4,11 +4,6 @@
 
 # TODO:
 #
-# - Make the following arguments mandatory:
-#   --prev
-#   --days
-#   --positions
-#
 # - Improve randomization:
 #   Couples issue: when a couple is chosen, they get the same TTR,
 #   so with a high probability they will be chosen again together.
@@ -122,16 +117,18 @@ def parse_arguments():
     # Create an ArgumentParser object
     parser = argparse.ArgumentParser(description="Command-line parser")
 
-    # Define the command-line arguments
-    parser.add_argument("file_name",   type=str,            help="XLS file name ")
+    # Define the command-line arguments - mandatory
+    parser.add_argument("file_name",   type=str,                help="XLS file name ")
+    parser.add_argument("--prev",      type=str, required=True, metavar='SHEET_NAME', help="Prev schedule sheet name (optional, default is today's date)")
+    parser.add_argument("--positions", type=int, required=True, metavar='N',          help="Number of positions")
+
+    # Define the command-line arguments - optional
     parser.add_argument("--seed",      type=int,            help="Seed")
-    parser.add_argument("--prev",      type=str,            help="Prev schedule sheet name (optional, default is today's date)")
     parser.add_argument("--next",      type=str,            help="Next schedule sheet name (optional, default is tomorrow's date)")
-    parser.add_argument("--write",     action="store_true", help="Do write result to the XLS file")
     parser.add_argument("--days",      type=int,            help="Number of days to schedule")
-    parser.add_argument("--positions", type=int,            help="Number of positions")
     parser.add_argument("--ttrn",      type=int,            help="Minimum time to rest after NIGHT shift")
     parser.add_argument("--ttrd",      type=int,            help="Minimum time to rest after DAY shift")
+    parser.add_argument("--write",     action="store_true", help="Do write result to the XLS file")
     parser.add_argument("--personal",  action="store_true", help="Print personal schedule")
 
     # Parse the command-line arguments
