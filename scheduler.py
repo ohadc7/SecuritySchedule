@@ -283,6 +283,7 @@ def get_one_day_ahead(date_one_day_behind):
 
     # Putting in format
     current_date = f"{day:02d}/{month:02d}"
+    print(f"Current_date = {current_date}")
     return current_date
 ##################################################################################
 # Get configurations
@@ -507,21 +508,10 @@ def print_db(header, db):
     for name in db:
         print(f"{name.ljust(COLUMN_WIDTH)}{db[name]}")
 
-# Getting the lowest items and keys of the values for an "n" amount of numbers above the lowest ttr
-def get_n_lowest_items(db, n):
-    # Sort the dictionary by values and get the N lowest items
-    sorted_items = sorted(db.items(), key=lambda item: item[1])
-    lowest_n_items = sorted_items[:n]
-
-    # Separate keys and values into two lists
-    keys = [item[0] for item in lowest_n_items]
-    values = [item[1] for item in lowest_n_items]
-
-    return keys, values
-
 # Get the name with lowest TTR value
 # Offset allows to skip N lowest values
 def get_lowest_ttr(db, offset=0):
+
     # Sort the dictionary by values in ascending order
     # To sort in descending order, add `, reverse=True` to the sorted function
     # FIXME: shuffle the names with the same value
@@ -532,22 +522,16 @@ def get_lowest_ttr(db, offset=0):
     iter_items = iter(sorted_db.items())
 
     # Skip offset
-    for i in range(offset+1):
-        item = next(iter_items)
+    for i in range(offset+1): item = next(iter_items)
 
     # Get lowest available TTR
-    # Keeping the last two lines
-    #lowest_ttr = item[1]
-    #all_names_with_lowest_ttr = [item[0]]
-
-    # 12 is an arbitrary number that i have seen to work best, could be optimized...
-    all_names_with_lowest_ttr, lowest_ttr = get_n_lowest_items(db, 12)
+    lowest_ttr = item[1]
+    all_names_with_lowest_ttr = [item[0]]
 
     # Get all items with the same TTR
     for i in range(offset+1, len(db.keys())):
         item = next(iter_items)
-        # If you go back to the latest version, change  to item[1] != lowest_ttr
-        if item[1] not in lowest_ttr:
+        if item[1] != lowest_ttr:
             break
         else:
             all_names_with_lowest_ttr.append(item[0])
