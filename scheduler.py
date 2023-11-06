@@ -364,51 +364,52 @@ def get_action(cfg_action, hour, team_size):
 ##################################################################################
 # Choose team
 def choose_team(hour, night_list, ttr_db, team_size, inactive_personnel, day_from_beginning):
-    #print(f"Choose team for hour {hour}\nNight_list: {night_list}")# \nDB: {ttr_db}")
     team = []
+
     if hour in night_hours_wr:
         is_night = 1
     else:
         is_night = 0
+
     # The real hour is because the inactive_personnel
     # dict does not have a day counter its just keeps going so if its a day ahead it will be [24,25,26...]
     # So in order to know we need to find the real_hour
     real_hour = day_from_beginning*24+hour
     for i in range(team_size):
-        name = get_lowest_ttr(ttr_db)
-        if is_night == 1 or real_hour in inactive_personnel[name[::-1]]:
+        # Build local db
+        local_db = {}
+        for item in ttr_db.items():
+            name = item[0]
+            ttr  = item[1]
+            # If is night, do not add previous night watchers to local_db
+            if not (is_night and name in night_list):
+                local_db[name] = ttr
+
+        name = get_lowest_ttr(local_db)
+
+        # Checks if the hour is overlapping with a known inactive hour of this person
+        if real_hour in inactive_personnel[name[::-1]]:
             # Using for (instead of while)to avoid endless loop
             # Possibly no choice but to take from night watchers
             # Checks if its night and that the personnel is active
             # The else checks just if the personnel is active(in the day hours)
-            if is_night == 1:
-                for j in range(len(ttr_db)):
-                    # Checks both if the hour is overlapping with a known inactive hour of this person
-                    # and is the person on the night list
-                    if name not in night_list:
-                        if real_hour not in inactive_personnel[name[::-1]]:
-                            break
-                    name = get_lowest_ttr(ttr_db, j + 1)
-            else:
-                # Checks if the hour is overlapping with a known inactive hour of this person
-                if real_hour in inactive_personnel[name[::-1]]:
-                    for k in range(len(ttr_db)):
-                        if real_hour not in inactive_personnel[name[::-1]]:
-                            break
-                        name = get_lowest_ttr(ttr_db, k + 1)
+            print(f"    On vacation")
+            for k in range(len(local_db)):
+                if real_hour not in inactive_personnel[name[::-1]]:
+                    break
+                name = get_lowest_ttr(local_db)
 
             # Check fairness
             if ttr_db[name] > 0:
-                error(f"Chosen {name} with TTR {ttr_db[name]}\nNight list: {night_list}\nSorted: {dict(sorted(ttr_db.items(), key=lambda item: item[1]))}")
+                error(f"Chosen {name} with TTR {ttr_db[name]}\n")
 
             # Added if because of a change in the code, we only need to run this "if" if its night time so added a check
             if is_night == 1:
                 if name in night_list:
-                    error(f"At {hour}:00, must take night watcher")
+                    error(f"At {hour}:00, the chosen one has already served last night")
+
         set_ttr(hour, name, ttr_db)
         team.append(name)
-
-    #print(f"Chosen team: {team}")
 
     return team
 
@@ -512,16 +513,28 @@ def print_db(header, db):
 # Getting the lowest items and keys of the values for an "n" amount of numbers above the lowest ttr
 # Returns the names with ttr in [TTR, TTR+1, TTR+2, ... TTR+n-1]
 def get_n_lowest_items(db, n):
-    # Sort the dictionary by values and get the N lowest items
-    sorted_items = sorted(db.items(), key=lambda item: item[1])
-    lowest_n_items = sorted_items[:n]
 
-    # In any case, disregarding num_of_allowed_ttrs, do not allow positive TTR
-    # Positive TTR means that the person didn't get his rest yet
-    # Remove positive values using a list comprehension
-    names_only_negative_ttrs = [x[0] for x in lowest_n_items if x[1] < 0]
+    # Get list of all available ttrs
+    list_of_unique_available_ttrs = []
+    for item in db.items():
+        if item[1] not in list_of_unique_available_ttrs:
+            list_of_unique_available_ttrs.append(item[1])
 
-    return names_only_negative_ttrs
+    # Sort the list
+    sorted_list_of_ttrs = sorted(list_of_unique_available_ttrs)
+
+    # Get N lowest TTRs
+    list_of_n_lowest_ttrs = sorted_list_of_ttrs[:n]
+
+    # Get list of names (only for negative TTRs)
+    names_with_lowest_ttrs = []
+    for item in db.items():
+        name = item[0]
+        ttr  = item[1]
+        if ttr < 0 and ttr in list_of_n_lowest_ttrs:
+            names_with_lowest_ttrs.append(name)
+
+    return names_with_lowest_ttrs
 
 # Get the name with lowest TTR value
 # Offset allows to skip N lowest values
@@ -539,10 +552,12 @@ def get_lowest_ttr(db, offset=0):
 
     # Get all names for with <SHUFFLE_COEFFICIENT> TTRs
     # (TTR, TTR+1, ... , TTR+SHUFFLE_COEFFICIENT-1)
-    all_names_with_lowest_ttr = get_n_lowest_items(sorted_db, SHUFFLE_COEFFICIENT)
+    all_names_with_lowest_ttr = get_n_lowest_items(db, SHUFFLE_COEFFICIENT)
 
     # Choose random name
-    name = random.choice(all_names_with_lowest_ttr)
+    shuffled_list_of_names = random.sample(all_names_with_lowest_ttr, len(all_names_with_lowest_ttr))
+
+    name = shuffled_list_of_names[0]
     #print(f"Sorted all_names_with_lowest_ttr: {all_names_with_lowest_ttr}, chosen: {name}, offset: {offset}")
     return name
 
