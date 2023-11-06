@@ -20,6 +20,8 @@
 #   Remove unused functions
 #
 # - Allow running without --prev?
+#
+# - Add check for the leftest column - error if not starts with 0:00
 
 # Nadav:
 # #######
@@ -122,11 +124,11 @@ def parse_arguments():
 
     # Define the command-line arguments - mandatory
     parser.add_argument("file_name",   type=str,                help="XLS file name ")
-    parser.add_argument("--prev",      type=str, required=True, metavar='SHEET_NAME', help="Prev schedule sheet name (optional, default is today's date)")
+    parser.add_argument("--prev",      type=str, required=True, metavar='SHEET_NAME', help="Prev schedule sheet name. Must be a valid date (yyyy-mm-dd)")
     parser.add_argument("--positions", type=int, required=True, metavar='N',          help="Number of positions")
 
     # Define the command-line arguments - optional
-    parser.add_argument("--next",      type=str,              help="Next schedule sheet name (optional, default is tomorrow's date)")
+    parser.add_argument("--next",      type=str,              help="Next schedule sheet name (optional, default is the day after prev")
     parser.add_argument("--days",      type=int,              help="Number of days to schedule")
     parser.add_argument("--ttrn",      type=int,              help="Minimum time to rest after NIGHT shift")
     parser.add_argument("--ttrd",      type=int,              help="Minimum time to rest after DAY shift")
@@ -398,7 +400,6 @@ def choose_team(hour, night_list, ttr_db, team_size, inactive_personnel, day_fro
             # Possibly no choice but to take from night watchers
             # Checks if its night and that the personnel is active
             # The else checks just if the personnel is active(in the day hours)
-            print(f"    On vacation")
             for k in range(len(local_db)):
                 if real_hour not in inactive_personnel[name[::-1]]:
                     break
@@ -761,13 +762,13 @@ def standard_deviation(hours_served, average):
 
 ##################################################################################
 # Verify result
-def verify(db, schedule):
+def verify(valid_names, schedule):
     print_delimiter()
     print(f"Verify total ({len(schedule)} lines)")
 
     # Init last_served
     last_served = {}
-    for name in db:
+    for name in valid_names:
         last_served[name] = -1
 
     # Check schedule
@@ -938,26 +939,41 @@ def check_positions(schedule, position_names):
     print("Average:".ljust(COLUMN_WIDTH+18)+average_str)
 
 ##################################################################################
+# Check prev_name format
+def check_prev_name(prev_name):
+    date_format = '%Y-%m-%d'
+    # If prev_name is not a date, replace it with today's date to allow the generation of next dates
+    try:
+        # Attempt to parse the date string with the specified format
+        datetime_obj = datetime.strptime(prev_name, date_format)
+        #print(f"'{prev_name}' is a valid date in the format '{date_format}'.")
+    except ValueError:
+        error(f"Previous sheet name must be a valid date in the format '{date_format}'. I know that the example is misleading and I apologize for that :) Will fix")
+
+##################################################################################
 # Main
 ##################################################################################
 def main():
     # Parse script arguments
     prev_name, next_name, xls_file_name, do_write = parse_arguments()
 
+    check_prev_name(prev_name)
+
     # Get inactive personnel dict
     inactive_personnel = extract_inactive_personnel(xls_file_name, prev_name)
+
     # Build TTR DB {name} -> {time to rest}
     ttr_db = build_people_db(xls_file_name)
-    print(f"Orig DB length = {len(ttr_db)}")
     valid_names = ttr_db.keys()
 
     # Get configurations
     cfg_action, cfg_team_size, cfg_position_name = get_cfg(xls_file_name)
+
+
     # Get previous schedule
     prev_schedule = get_prev_schedule(xls_file_name, prev_name, cfg_position_name)
     print_schedule(prev_schedule, cfg_position_name, prev_name)
-    total_new_schedule = [] + prev_schedule # Important: using + to avoid copy by reference
-
+    total_new_schedule = prev_schedule.copy()
 
     # Build schedule for N days
     for day in range(DAYS_TO_PLAN):
@@ -982,7 +998,7 @@ def main():
         prev_schedule      = new_schedule
 
     # Run checks
-    verify(ttr_db, total_new_schedule)
+    verify(valid_names, total_new_schedule)
     if (PRINT_STATISTICS):
         check_teams(total_new_schedule)
         check_positions(total_new_schedule, cfg_position_name)
