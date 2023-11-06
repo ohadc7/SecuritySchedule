@@ -3,48 +3,25 @@
 # TTR == Time to rest
 
 # TODO:
+#######
+# - Allow running without --prev
 #
-# - Improve randomization:
-#   Couples issue: when a couple is chosen, they get the same TTR,
-#   so with a high probability they will be chosen again together.
-#   Consider, for very low TTRs, to take also the next 1-2 levels
-# - Verification:
-#   Add check for two nights in a row
+# - Add check for the leftest column - error if not starts with 0:00 or other way incorrect
 #
-# - Fairness check, add how many times was assigned a person to a position,
-#   - Per person
-#   - Per position
-#
-# - Code cleanup
-#   Replace get_one_day_ahead() with get_next_date()
-#   Remove unused functions
-#
-# - Allow running without --prev?
-#
-# - Add check for the leftest column - error if not starts with 0:00
+# - Add deviation for position distribution
+#   Best if we use the same function for deviation, but not a must
 
 # Nadav:
-# #######
+########
 # Run many times until the person who is with the worst score the most has the list amount
 # of score (served * 1 + night_served*1.5)
 # change slightly ttr_values and see if it changes something
-# Improve verify() function - currently checks that TTR is observed, check also that now two nights in a row
-#
-# Consider:
-# - Weight per position, per hour
-# - Read from XLS, same as team_size or action
-# - Use weight instead of TTR in set_ttr()
-# Flusk? Pygame?
-# Make object-oriented:
-#   Class ttr_db
-#   Class schedule
-#   Other?
-
+# Improve verify() function - currently checks that TTR is observed, check also that not two nights in a row
 # Idea, because of the shuffling in the algorithm you can run it a few times and get different results.
 # we could simply run it 50 times in a loop and take the schedule with the best standard deviation.
 
-# Later
-
+# Later:
+########
 # - Errors should be warnings by default, error for developer (controlled with --arg)
 # - Consider: MAX_TTR = MIN_TTR * 2 - 1
 # - Consider: post-processing to fix fairness
@@ -55,6 +32,15 @@
 # - Support list of people per position
 # - Improve XLS parsing (read once, all sheets, then parse)
 # - Run fairness check on range of sheets, possibly without generating
+# - Consider:
+#   - Weight per position, per hour
+#   - Read from XLS, same as team_size or action
+#   - Use weight instead of TTR in set_ttr()
+#   - Flusk? Pygame?
+# - Make object-oriented:
+#   Class ttr_db
+#   Class schedule
+#   Etc.
 
 import sys
 import os
@@ -114,6 +100,10 @@ PINK = 0; BLUE = 1; GREEN  = 2; YELLOW = 3; PURPLE = 4
 def print_delimiter(): print("#" * LINE_WIDTH)
 def error(message):    print('Error: '+message); exit(1)
 def warning(message):  print('Warning: '+message);
+
+def print_delimiter_and_str(str):
+    print_delimiter()
+    print (str)
 
 ##################################################################################
 # Functions
@@ -245,54 +235,45 @@ def parse_hours(time_of_inactivity, date_one_day_behind):
     # Just so there will be a return of an empty list
     return hour_values
 
-# Taking the inactive personnel in the xlsx file and turning it into a dict for later use
-def extract_inactive_personnel(xls_file_name, date_one_day_behind):
+# Taking the "Time off"information from the xlsx file and turning it into a dict for later use
+def extract_time_off_db(xls_file_name, date_one_day_behind):
     # Init all the relevant data from the file
-    index_of_time_of_inactivity = 0
+    index_of_time_off = 0
     names = extract_column_from_sheet(xls_file_name, "List of people", "People")
     try:
-        time_of_inactivity = extract_column_from_sheet(xls_file_name, "List of people", "Time off")
+        time_off = extract_column_from_sheet(xls_file_name, "List of people", "Time off")
     except:
         error("Please add column 'Time off' next to the People column, at 'List of people' sheet")
-    inactive_personnel = {}
+    time_off_db = {}
     for name in names:
         # Transforming into string in case of a number input
         if type(name) is str:
-            inactive_personnel[name] = []
+            time_off_db[name] = []
             # Checking in the value is NaN (NaN != Nan)
-            if time_of_inactivity[index_of_time_of_inactivity] != time_of_inactivity[index_of_time_of_inactivity]:
+            if time_off[index_of_time_off] != time_off[index_of_time_off]:
                 pass
             else:
-                inactive_personnel[name].append(time_of_inactivity[index_of_time_of_inactivity])
-            index_of_time_of_inactivity += 1
+                time_off_db[name].append(time_off[index_of_time_off])
+            index_of_time_off += 1
 
-    for name in inactive_personnel:
-        if inactive_personnel[name] != []:
+    for name in time_off_db:
+        if time_off_db[name] != []:
             # Adding the the name the value that is a list with the hours they cant serve
-            inactive_personnel[name] = parse_hours(inactive_personnel[name][0], date_one_day_behind)
-    return inactive_personnel
+            time_off_db[name] = parse_hours(time_off_db[name][0], date_one_day_behind)
+    #print(f"Time off DB: {time_off_db}")
+    return time_off_db
 
-# Getting a date like "23 - 1 - 25" and turning it into "26/1", for the parse_hours function
-def get_one_day_ahead(date_one_day_behind):
-    year, month, day = map(int, date_one_day_behind.split("-"))
-    day += 1
+# Getting a date like "23-1-25" and turning it into "26/1", for the parse_hours function
+def get_one_day_ahead(prev_date):
+    # Get the next date
+    next_date = get_next_date(prev_date)
 
-    # Make a dict with the number of days in each month
-    days_in_month = {1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 6: 30, 7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31}
+    # Reformat
+    # FIXME: bug 2000
+    year, month, day = map(int, next_date.split("-"))
+    next_date_reformat = f"{day:02d}/{month:02d}"
+    return next_date_reformat
 
-    # Checking if a month has passed
-    if day > days_in_month[month]:
-        day = 1
-        month += 1
-
-    # Checking if an year have passed, i hope not...
-    if month > 12:
-        month = 1
-        year += 1
-
-    # Putting in format
-    current_date = f"{day:02d}/{month:02d}"
-    return current_date
 ##################################################################################
 # Get configurations
 # Consider:
@@ -370,7 +351,7 @@ def get_action(cfg_action, hour, team_size):
 
 ##################################################################################
 # Choose team
-def choose_team(hour, night_list, ttr_db, team_size, inactive_personnel, day_from_beginning):
+def choose_team(hour, night_list, ttr_db, team_size, time_off_db, day_from_beginning):
     team = []
 
     if hour in night_hours_wr:
@@ -378,7 +359,7 @@ def choose_team(hour, night_list, ttr_db, team_size, inactive_personnel, day_fro
     else:
         is_night = 0
 
-    # The real hour is because the inactive_personnel
+    # The real hour is because the time_off_db
     # dict does not have a day counter its just keeps going so if its a day ahead it will be [24,25,26...]
     # So in order to know we need to find the real_hour
     real_hour = day_from_beginning*24+hour
@@ -394,14 +375,14 @@ def choose_team(hour, night_list, ttr_db, team_size, inactive_personnel, day_fro
 
         name = get_lowest_ttr(local_db)
 
-        # Checks if the hour is overlapping with a known inactive hour of this person
-        if real_hour in inactive_personnel[name[::-1]]:
+        # Checks if the hour is overlapping with a known "time off" hour of this person
+        if real_hour in time_off_db[name[::-1]]:
             # Using for (instead of while)to avoid endless loop
             # Possibly no choice but to take from night watchers
             # Checks if its night and that the personnel is active
             # The else checks just if the personnel is active(in the day hours)
             for k in range(len(local_db)):
-                if real_hour not in inactive_personnel[name[::-1]]:
+                if real_hour not in time_off_db[name[::-1]]:
                     break
                 name = get_lowest_ttr(local_db)
 
@@ -421,7 +402,7 @@ def choose_team(hour, night_list, ttr_db, team_size, inactive_personnel, day_fro
 
 ##################################################################################
 # Resize team
-def resize_team(hour, night_list, ttr_db, old_team, new_team_size, inactive_personnel, day_from_beginning):
+def resize_team(hour, night_list, ttr_db, old_team, new_team_size, time_off_db, day_from_beginning):
 
     if new_team_size == 0:
         return [""]
@@ -441,13 +422,13 @@ def resize_team(hour, night_list, ttr_db, old_team, new_team_size, inactive_pers
             released = new_team.pop(random_index)
     else:
         # Increase team size
-        new_team += choose_team(hour, night_list, ttr_db, new_team_size-old_team_size, inactive_personnel, day_from_beginning)
+        new_team += choose_team(hour, night_list, ttr_db, new_team_size-old_team_size, time_off_db, day_from_beginning)
 
     return new_team
 
 ##################################################################################
 # Make the assignments
-def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size, inactive_personnel, day_from_beginning):
+def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size, time_off_db, day_from_beginning):
     schedule = [[] for _ in range(HOURS_IN_DAY)]
     # Stores the current team at the specific position
     # If no action, the same team continues to the next hour
@@ -461,9 +442,9 @@ def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size,
             team      = teams[position]
 
             if action == SWAP:
-                team = choose_team(hour, night_list, ttr_db, team_size, inactive_personnel, day_from_beginning)
+                team = choose_team(hour, night_list, ttr_db, team_size, time_off_db, day_from_beginning)
             elif action == RESIZE:
-                team = resize_team(hour, night_list, ttr_db, team, team_size, inactive_personnel, day_from_beginning)
+                team = resize_team(hour, night_list, ttr_db, team, team_size, time_off_db, day_from_beginning)
             elif hour == 0:
                 team = prev_schedule[HOURS_IN_DAY-1][position]
                 # Note: these people should be recorded as night watchers
@@ -518,7 +499,7 @@ def print_db(header, db):
 
 # Getting the lowest items and keys of the values for an "n" amount of numbers above the lowest ttr
 # Returns the names with ttr in [TTR, TTR+1, TTR+2, ... TTR+n-1]
-def get_n_lowest_items(db, n):
+def get_list_of_lowest_ttrs(db, n):
 
     # Get list of all available ttrs
     list_of_unique_available_ttrs = []
@@ -558,7 +539,7 @@ def get_lowest_ttr(db, offset=0):
 
     # Get all names for with <SHUFFLE_COEFFICIENT> TTRs
     # (TTR, TTR+1, ... , TTR+SHUFFLE_COEFFICIENT-1)
-    all_names_with_lowest_ttr = get_n_lowest_items(db, SHUFFLE_COEFFICIENT)
+    all_names_with_lowest_ttr = get_list_of_lowest_ttrs(db, SHUFFLE_COEFFICIENT)
 
     # Choose random name
     shuffled_list_of_names = random.sample(all_names_with_lowest_ttr, len(all_names_with_lowest_ttr))
@@ -599,13 +580,11 @@ def update_db_with_prev_schedule(valid_names, db, schedule):
 ##################################################################################
 # Print schedule
 def print_schedule(schedule, cfg_position_name, schedule_name):
-    print_delimiter()
-    print(schedule_name)
-    print_delimiter()
+    print_delimiter_and_str(schedule_name)
     header = "Hour\t"
     for position in range(NUM_OF_POSITIONS):
         header += (cfg_position_name[position]).ljust(COLUMN_WIDTH)+"\t"
-    print(header)
+    print_delimiter_and_str(header)
     print_delimiter()
 
     for hour in range(HOURS_IN_DAY):
@@ -718,14 +697,13 @@ def check_fairness(db, schedule):
                 if name != 'nan' and name in hours_served:
                     hours_served[name] += 1
     # Report
-    print_delimiter()
-    print(f"Check fairness")
-    print_delimiter()
+    print_delimiter_and_str("Check fairness")
 
     # Calculating the most hours served to print it in line
     name_of_the_most_hours_served = max(hours_served, key=lambda k: hours_served[k])
     most_hours_served = hours_served[name_of_the_most_hours_served]
 
+    print_delimiter()
     for name in hours_served:
         print(f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(hours_served[name]).ljust(4)}\t{('*' * hours_served[name]).ljust(most_hours_served+5)}"
               f" Night hours served: {str(night_hours_served[name]).ljust(4)}" + ('*'*night_hours_served[name]))
@@ -763,8 +741,6 @@ def standard_deviation(hours_served, average):
 ##################################################################################
 # Verify result
 def verify(valid_names, schedule):
-    print_delimiter()
-    print(f"Verify total ({len(schedule)} lines)")
 
     # Init last_served
     last_served = {}
@@ -806,7 +782,6 @@ def check_for_idle(db, schedule):
     # Check who didn't participate
     not_assigned = [item for item in participated.keys() if participated[item] == 0]
     # if not_assigned:
-    #     print_delimiter()
     #     print(f"Not assigned: {not_assigned}")
 
     return
@@ -844,8 +819,7 @@ def print_personal_info(schedule, date):
                 else:
                     personal_schedule[name] = f", {hour}:00"
 
-    print_delimiter()
-    print(f"Personal schedule for {date}")
+    print_delimiter_and_str(f"Personal schedule for {date}")
     for name in personal_schedule.keys():
         print(f"{name}: {personal_schedule[name]}")
 
@@ -854,8 +828,7 @@ def print_personal_info(schedule, date):
 ##################################################################################
 # Print information that can be usefule for debug
 def print_debug_info():
-    print(f"Current seed: {SEED}")
-    print_delimiter()
+    print_delimiter_and_str(f"Current seed: {SEED}")
 
 ##################################################################################
 # Check reappearance of teams
@@ -881,22 +854,16 @@ def check_teams(schedule):
 
     # Sort by number of occurance
     sorted_teams_db = dict(sorted(teams_db.items(), key=lambda item: item[1]))
-    print_delimiter()
-    print(f"Teams: {sorted_teams_db}")
+    print_delimiter_and_str(f"Teams: {sorted_teams_db}")
 
 ##################################################################################
 # Check distribution of people between positions
 def check_positions(schedule, position_names):
-    # Building empty DB, for each name, list of positions
+    # Build DB, for each name, list of positions
     # Each member will reflect hours spent in this position
     positions_db = {}
 
-    # Position total hours, used to calculate expected average
-    position_total_hours = []
-    for p in range(NUM_OF_POSITIONS):
-        position_total_hours.append(0)
-
-    # Collect data from DB
+    # Collect data from schedule
     for hour in range(len(schedule)):
         for position in range(NUM_OF_POSITIONS):
             team = schedule[hour][position]
@@ -913,14 +880,12 @@ def check_positions(schedule, position_names):
                         positions_db[name].append(0)
                 # Update
                 positions_db[name][position]   += 1
-                position_total_hours[position] += 1
 
-    # Print header
-    print_delimiter()
+    # Print header (with position names)
     header_str = "Positions summary".ljust(COLUMN_WIDTH+18)
     for p in range(NUM_OF_POSITIONS):
         header_str += str(position_names[p]).ljust(15)
-    print(header_str)
+    print_delimiter_and_str(header_str)
     print_delimiter()
 
     # Print summary per person
@@ -930,13 +895,35 @@ def check_positions(schedule, position_names):
             positions_str += str(positions_db[name][p]).ljust(15)
         print(f"Name: {name.ljust(COLUMN_WIDTH)} positions: {positions_str}")
 
-    #Print averages
-    num_of_names = len(positions_db)
+    # Print averages
     average_str = ""
+    position_average_list = get_position_average_list(positions_db)
     for p in range(NUM_OF_POSITIONS):
-        average_str += str(int(position_total_hours[p]/num_of_names)).ljust(15)
-    print_delimiter()
-    print("Average:".ljust(COLUMN_WIDTH+18)+average_str)
+        average_str += str(position_average_list[p]).ljust(15)
+    print_delimiter_and_str("Average:".ljust(COLUMN_WIDTH+18)+average_str)
+
+##################################################################################
+# Calculate average per position
+def get_position_average_list(db):
+    # Init list of totals, used to calculate expected average
+    position_total_hours = []
+    for position in range(NUM_OF_POSITIONS):
+        position_total_hours.append(0)
+
+    # Get total hours for each position
+    for name in db.keys():
+        for position in range(NUM_OF_POSITIONS):
+            position_total_hours[position] += db[name][position]
+
+    # Get number of people
+    num_of_people = len(db.keys())
+
+    # Calculate average per position
+    position_average_list = []
+    for position in range(NUM_OF_POSITIONS):
+        position_average_list.append(int(position_total_hours[position]/num_of_people))
+
+    return position_average_list
 
 ##################################################################################
 # Check prev_name format
@@ -959,8 +946,8 @@ def main():
 
     check_prev_name(prev_name)
 
-    # Get inactive personnel dict
-    inactive_personnel = extract_inactive_personnel(xls_file_name, prev_name)
+    # Get "Time off" information
+    time_off_db = extract_time_off_db(xls_file_name, prev_name)
 
     # Build TTR DB {name} -> {time to rest}
     ttr_db = build_people_db(xls_file_name)
@@ -982,7 +969,7 @@ def main():
         prev_night_list = update_db_with_prev_schedule(valid_names, ttr_db, prev_schedule)
 
         # Build next day schedule
-        new_schedule = build_schedule(prev_schedule, prev_night_list, ttr_db, cfg_action, cfg_team_size, inactive_personnel, day)
+        new_schedule = build_schedule(prev_schedule, prev_night_list, ttr_db, cfg_action, cfg_team_size, time_off_db, day)
         check_for_idle(ttr_db, new_schedule)
         # Get next sheet name
         next_name = get_next_date(prev_name)
