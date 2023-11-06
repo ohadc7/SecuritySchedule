@@ -885,7 +885,7 @@ def check_teams(schedule):
 
 ##################################################################################
 # Check distribution of people between positions
-def check_positions(schedule):
+def check_positions(schedule, position_names):
     # Building empty DB, for each name, list of positions
     # Each member will reflect hours spent in this position
     positions_db = {}
@@ -895,6 +895,7 @@ def check_positions(schedule):
     for p in range(NUM_OF_POSITIONS):
         position_total_hours.append(0)
 
+    # Collect data from DB
     for hour in range(len(schedule)):
         for position in range(NUM_OF_POSITIONS):
             team = schedule[hour][position]
@@ -913,23 +914,28 @@ def check_positions(schedule):
                 positions_db[name][position]   += 1
                 position_total_hours[position] += 1
 
-    # Print
+    # Print header
     print_delimiter()
-    print(f"Positions summary")
+    header_str = "Positions summary".ljust(COLUMN_WIDTH+18)
+    for p in range(NUM_OF_POSITIONS):
+        header_str += str(position_names[p]).ljust(15)
+    print(header_str)
     print_delimiter()
+
+    # Print summary per person
     for name in positions_db:
         positions_str = ""
         for p in range(NUM_OF_POSITIONS):
-            positions_str += str(positions_db[name][p]).ljust(4)
-        print(f"Name: {name.ljust(COLUMN_WIDTH)} positions: [{positions_str}]")
+            positions_str += str(positions_db[name][p]).ljust(15)
+        print(f"Name: {name.ljust(COLUMN_WIDTH)} positions: {positions_str}")
 
     #Print averages
     num_of_names = len(positions_db)
     average_str = ""
     for p in range(NUM_OF_POSITIONS):
-        average_str += str(int(position_total_hours[p]/num_of_names)).ljust(4)
+        average_str += str(int(position_total_hours[p]/num_of_names)).ljust(15)
     print_delimiter()
-    print("Average:".ljust(COLUMN_WIDTH+18)+"["+average_str+"]")
+    print("Average:".ljust(COLUMN_WIDTH+18)+average_str)
 
 ##################################################################################
 # Main
@@ -979,7 +985,7 @@ def main():
     verify(ttr_db, total_new_schedule)
     if (PRINT_STATISTICS):
         check_teams(total_new_schedule)
-        check_positions(total_new_schedule)
+        check_positions(total_new_schedule, cfg_position_name)
     check_fairness(ttr_db, total_new_schedule)
 
 ##################################################################################
