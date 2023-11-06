@@ -18,6 +18,8 @@
 # - Code cleanup
 #   Replace get_one_day_ahead() with get_next_date()
 #   Remove unused functions
+#
+# - Allow running without --prev?
 
 # Nadav:
 # #######
@@ -79,6 +81,7 @@ SEED                = 1
 TTR_NIGHT           = 9
 TTR_DAY             = 4
 PERSONAL_SCHEDULE   = 0
+PRINT_STATISTICS    = 0
 
 ##################################################################################
 # Constants
@@ -129,6 +132,7 @@ def parse_arguments():
     parser.add_argument("--ttrd",      type=int,              help="Minimum time to rest after DAY shift")
     parser.add_argument("--write",     action="store_true",   help="Do write result to the XLS file")
     parser.add_argument("--personal",  action="store_true",   help="Print personal schedule")
+    parser.add_argument("--statistics",action="store_true",   help="Print statistics for this run")
     parser.add_argument("--seed",      type=int,              help="Seed")
     parser.add_argument("--shuffle",   type=int, metavar='N', help=f"Shuffle coeffitient. Default is 4. Higher value gives more randomization, may reduce fairness for short runs")
 
@@ -140,13 +144,14 @@ def parse_arguments():
     do_write      = args.write
 
     # Configure global variables
-    if args.days:      global DAYS_TO_PLAN;        DAYS_TO_PLAN        = args.days
-    if args.positions: global NUM_OF_POSITIONS;    NUM_OF_POSITIONS    = args.positions
-    if args.seed:      global SEED;                SEED                = args.seed; random.seed(SEED)
-    if args.ttrn:      global TTR_NIGHT;           TTR_NIGHT           = args.ttrn
-    if args.ttrd:      global TTR_DAY;             TTR_DAY             = args.ttrd
-    if args.personal:  global PERSONAL_SCHEDULE;   PERSONAL_SCHEDULE   = args.personal;
-    if args.shuffle:   global SHUFFLE_COEFFICIENT; SHUFFLE_COEFFICIENT = args.shuffle;
+    if args.days:       global DAYS_TO_PLAN;        DAYS_TO_PLAN        = args.days
+    if args.positions:  global NUM_OF_POSITIONS;    NUM_OF_POSITIONS    = args.positions
+    if args.seed:       global SEED;                SEED                = args.seed; random.seed(SEED)
+    if args.ttrn:       global TTR_NIGHT;           TTR_NIGHT           = args.ttrn
+    if args.ttrd:       global TTR_DAY;             TTR_DAY             = args.ttrd
+    if args.personal:   global PERSONAL_SCHEDULE;   PERSONAL_SCHEDULE   = args.personal;
+    if args.shuffle:    global SHUFFLE_COEFFICIENT; SHUFFLE_COEFFICIENT = args.shuffle;
+    if args.statistics: global PRINT_STATISTICS;    PRINT_STATISTICS    = args.statistics;
 
     # Sanity checks
     if not os.path.exists(xls_file_name):                  error(f"File {xls_file_name} does not exist.")
@@ -875,7 +880,56 @@ def check_teams(schedule):
 
     # Sort by number of occurance
     sorted_teams_db = dict(sorted(teams_db.items(), key=lambda item: item[1]))
+    print_delimiter()
     print(f"Teams: {sorted_teams_db}")
+
+##################################################################################
+# Check distribution of people between positions
+def check_positions(schedule):
+    # Building empty DB, for each name, list of positions
+    # Each member will reflect hours spent in this position
+    positions_db = {}
+
+    # Position total hours, used to calculate expected average
+    position_total_hours = []
+    for p in range(NUM_OF_POSITIONS):
+        position_total_hours.append(0)
+
+    for hour in range(len(schedule)):
+        for position in range(NUM_OF_POSITIONS):
+            team = schedule[hour][position]
+            # Skip empty teams
+            if not team:
+                continue
+
+            # Update DB
+            for name in team:
+                # Init new entry with list of zeros
+                if name not in positions_db:
+                    positions_db[name] = []
+                    for p in range(NUM_OF_POSITIONS):
+                        positions_db[name].append(0)
+                # Update
+                positions_db[name][position]   += 1
+                position_total_hours[position] += 1
+
+    # Print
+    print_delimiter()
+    print(f"Positions summary")
+    print_delimiter()
+    for name in positions_db:
+        positions_str = ""
+        for p in range(NUM_OF_POSITIONS):
+            positions_str += str(positions_db[name][p]).ljust(4)
+        print(f"Name: {name.ljust(COLUMN_WIDTH)} positions: [{positions_str}]")
+
+    #Print averages
+    num_of_names = len(positions_db)
+    average_str = ""
+    for p in range(NUM_OF_POSITIONS):
+        average_str += str(int(position_total_hours[p]/num_of_names)).ljust(4)
+    print_delimiter()
+    print("Average:".ljust(COLUMN_WIDTH+18)+"["+average_str+"]")
 
 ##################################################################################
 # Main
@@ -923,10 +977,10 @@ def main():
 
     # Run checks
     verify(ttr_db, total_new_schedule)
-    check_teams(total_new_schedule)
+    if (PRINT_STATISTICS):
+        check_teams(total_new_schedule)
+        check_positions(total_new_schedule)
     check_fairness(ttr_db, total_new_schedule)
-    print_debug_info()
-
 
 ##################################################################################
 if __name__ == '__main__':
