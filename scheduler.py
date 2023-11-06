@@ -69,11 +69,22 @@ from openpyxl.styles               import Font
 from datetime                      import datetime, timedelta
 
 ##################################################################################
+# User parameters
+##################################################################################
+
+NUM_OF_POSITIONS    = 5
+DAYS_TO_PLAN        = 1
+SHUFFLE_COEFFICIENT = 4
+SEED                = 1
+TTR_NIGHT           = 9
+TTR_DAY             = 4
+PERSONAL_SCHEDULE   = 0
+
+##################################################################################
 # Constants
 ##################################################################################
 
 HOURS_IN_DAY     = 24
-NUM_OF_POSITIONS = 5
 COLUMN_WIDTH     = 27
 LINE_WIDTH       = 10 + NUM_OF_POSITIONS*COLUMN_WIDTH
 
@@ -90,17 +101,6 @@ night_hours_wr   = [23, 0, 1, 2, 3, 4]
 NONE = 0; SWAP = 1; RESIZE = 2
 # Colors
 PINK = 0; BLUE = 1; GREEN  = 2; YELLOW = 3; PURPLE = 4
-
-##################################################################################
-# Configurable default values
-##################################################################################
-
-SEED         = 1
-DAYS_TO_PLAN = 1
-TTR_NIGHT    = 9
-TTR_DAY      = 4
-
-PERSONAL_SCHEDULE = 0
 
 ##################################################################################
 # Utils
@@ -123,13 +123,14 @@ def parse_arguments():
     parser.add_argument("--positions", type=int, required=True, metavar='N',          help="Number of positions")
 
     # Define the command-line arguments - optional
-    parser.add_argument("--seed",      type=int,            help="Seed")
-    parser.add_argument("--next",      type=str,            help="Next schedule sheet name (optional, default is tomorrow's date)")
-    parser.add_argument("--days",      type=int,            help="Number of days to schedule")
-    parser.add_argument("--ttrn",      type=int,            help="Minimum time to rest after NIGHT shift")
-    parser.add_argument("--ttrd",      type=int,            help="Minimum time to rest after DAY shift")
-    parser.add_argument("--write",     action="store_true", help="Do write result to the XLS file")
-    parser.add_argument("--personal",  action="store_true", help="Print personal schedule")
+    parser.add_argument("--next",      type=str,              help="Next schedule sheet name (optional, default is tomorrow's date)")
+    parser.add_argument("--days",      type=int,              help="Number of days to schedule")
+    parser.add_argument("--ttrn",      type=int,              help="Minimum time to rest after NIGHT shift")
+    parser.add_argument("--ttrd",      type=int,              help="Minimum time to rest after DAY shift")
+    parser.add_argument("--write",     action="store_true",   help="Do write result to the XLS file")
+    parser.add_argument("--personal",  action="store_true",   help="Print personal schedule")
+    parser.add_argument("--seed",      type=int,              help="Seed")
+    parser.add_argument("--shuffle",   type=int, metavar='N', help=f"Shuffle coeffitient. Default is 4. Higher value gives more randomization, may reduce fairness for short runs")
 
     # Parse the command-line arguments
     args = parser.parse_args()
@@ -139,12 +140,13 @@ def parse_arguments():
     do_write      = args.write
 
     # Configure global variables
-    if args.days:      global DAYS_TO_PLAN;      DAYS_TO_PLAN      = args.days
-    if args.positions: global NUM_OF_POSITIONS;  NUM_OF_POSITIONS  = args.positions
-    if args.seed:      global SEED;              SEED              = args.seed; random.seed(SEED)
-    if args.ttrn:      global TTR_NIGHT;         TTR_NIGHT         = args.ttrn
-    if args.ttrd:      global TTR_DAY;           TTR_DAY           = args.ttrd
-    if args.personal:  global PERSONAL_SCHEDULE; PERSONAL_SCHEDULE = args.personal;
+    if args.days:      global DAYS_TO_PLAN;        DAYS_TO_PLAN        = args.days
+    if args.positions: global NUM_OF_POSITIONS;    NUM_OF_POSITIONS    = args.positions
+    if args.seed:      global SEED;                SEED                = args.seed; random.seed(SEED)
+    if args.ttrn:      global TTR_NIGHT;           TTR_NIGHT           = args.ttrn
+    if args.ttrd:      global TTR_DAY;             TTR_DAY             = args.ttrd
+    if args.personal:  global PERSONAL_SCHEDULE;   PERSONAL_SCHEDULE   = args.personal;
+    if args.shuffle:   global SHUFFLE_COEFFICIENT; SHUFFLE_COEFFICIENT = args.shuffle;
 
     # Sanity checks
     if not os.path.exists(xls_file_name):                  error(f"File {xls_file_name} does not exist.")
@@ -283,7 +285,6 @@ def get_one_day_ahead(date_one_day_behind):
 
     # Putting in format
     current_date = f"{day:02d}/{month:02d}"
-    print(f"Current_date = {current_date}")
     return current_date
 ##################################################################################
 # Get configurations
@@ -508,52 +509,42 @@ def print_db(header, db):
     for name in db:
         print(f"{name.ljust(COLUMN_WIDTH)}{db[name]}")
 
+# Getting the lowest items and keys of the values for an "n" amount of numbers above the lowest ttr
+# Returns the names with ttr in [TTR, TTR+1, TTR+2, ... TTR+n-1]
+def get_n_lowest_items(db, n):
+    # Sort the dictionary by values and get the N lowest items
+    sorted_items = sorted(db.items(), key=lambda item: item[1])
+    lowest_n_items = sorted_items[:n]
+
+    # In any case, disregarding num_of_allowed_ttrs, do not allow positive TTR
+    # Positive TTR means that the person didn't get his rest yet
+    # Remove positive values using a list comprehension
+    names_only_negative_ttrs = [x[0] for x in lowest_n_items if x[1] < 0]
+
+    return names_only_negative_ttrs
+
 # Get the name with lowest TTR value
 # Offset allows to skip N lowest values
 def get_lowest_ttr(db, offset=0):
-
     # Sort the dictionary by values in ascending order
     # To sort in descending order, add `, reverse=True` to the sorted function
-    # FIXME: shuffle the names with the same value
     sorted_db = dict(sorted(db.items(), key=lambda item: item[1]))
-    #print(f"Sorted DB: {sorted_db}")
 
-    # Create an iterator over the dictionary items
-    iter_items = iter(sorted_db.items())
+    # Get the keys to remove (first N keys)
+    keys_to_remove = list(sorted_db.keys())[:offset]
 
-    # Skip offset
-    for i in range(offset+1): item = next(iter_items)
+    # Remove the items with the selected keys
+    for key in keys_to_remove:
+        del sorted_db[key]
 
-    # Get lowest available TTR
-    lowest_ttr = item[1]
-    all_names_with_lowest_ttr = [item[0]]
-
-    # Get all items with the same TTR
-    for i in range(offset+1, len(db.keys())):
-        item = next(iter_items)
-        if item[1] != lowest_ttr:
-            break
-        else:
-            all_names_with_lowest_ttr.append(item[0])
-
+    # Get all names for with <SHUFFLE_COEFFICIENT> TTRs
+    # (TTR, TTR+1, ... , TTR+SHUFFLE_COEFFICIENT-1)
+    all_names_with_lowest_ttr = get_n_lowest_items(sorted_db, SHUFFLE_COEFFICIENT)
 
     # Choose random name
     name = random.choice(all_names_with_lowest_ttr)
     #print(f"Sorted all_names_with_lowest_ttr: {all_names_with_lowest_ttr}, chosen: {name}, offset: {offset}")
     return name
-
-# Shuffling all personal with same ttr value
-def shuffle_and_sort_same_ttr_values(db):
-    # Sort the dictionary by values
-    sorted_dict = dict(sorted(db.items(), key=lambda item: item[1]))
-    # Shuffle keys
-    keys = list(sorted_dict.keys())
-    random.shuffle(keys)
-    # creating new
-    shuffled_dict = {key: sorted_dict[key] for key in keys}
-    # Sorting again
-    shuffled_dict = dict(sorted(shuffled_dict.items(), key=lambda item: item[1]))
-    return shuffled_dict
 
 ##################################################################################
 # Update TTR DB with previous schedule
@@ -654,7 +645,7 @@ def color_worksheet(worksheet):
         cell.font = Font(bold=True)
 
 ##################################################################################
-# Verify result
+# Add color to column
 def color_column(worksheet, index, color):
     # Create a PatternFill object with the required color
     if color   == PINK:
@@ -735,6 +726,7 @@ def check_fairness(db, schedule):
 
     return 1
 
+##################################################################################
 def standard_deviation(hours_served, average):
     # In order to calculate the standard deviation you need to calculate the sum of the
     # differences between all the people and the average to the power of 2 and then divide
@@ -837,6 +829,7 @@ def print_personal_info(schedule, date):
         print(f"{name}: {personal_schedule[name]}")
 
 
+
 ##################################################################################
 # Print information that can be usefule for debug
 def print_debug_info():
@@ -854,6 +847,10 @@ def check_teams(schedule):
             if not team:
                 continue
 
+            # Skip single person teams - may also be interesting later
+            if len(team) == 1:
+                continue
+
             # Team is a list - sort and turn into string
             sorted_team_str = ",".join(sorted(team))
             if sorted_team_str in teams_db.keys():
@@ -864,7 +861,6 @@ def check_teams(schedule):
     # Sort by number of occurance
     sorted_teams_db = dict(sorted(teams_db.items(), key=lambda item: item[1]))
     print(f"Teams: {sorted_teams_db}")
-
 
 ##################################################################################
 # Main
