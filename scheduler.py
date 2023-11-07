@@ -5,11 +5,9 @@
 # TODO:
 #######
 # - Allow running without --prev
-#
 # - Add check for the leftest column - error if not starts with 0:00 or other way incorrect
-#
-# - Add deviation for position distribution
-#   Best if we use the same function for deviation, but not a must
+# - Thinking of adding post processing
+# - Transforming the graph into a heat map with night values or changing the graph to columns graph
 
 # Nadav:
 ########
@@ -70,6 +68,7 @@ TTR_NIGHT           = 9
 TTR_DAY             = 4
 PERSONAL_SCHEDULE   = 0
 PRINT_STATISTICS    = 0
+GRAPH = 0
 
 ##################################################################################
 # Constants
@@ -123,10 +122,11 @@ def parse_arguments():
     parser.add_argument("--ttrn",      type=int,              help="Minimum time to rest after NIGHT shift")
     parser.add_argument("--ttrd",      type=int,              help="Minimum time to rest after DAY shift")
     parser.add_argument("--write",     action="store_true",   help="Do write result to the XLS file")
+    parser.add_argument("--graph",     action="store_true",   help="Displaying graph of hours served")
     parser.add_argument("--personal",  action="store_true",   help="Print personal schedule")
     parser.add_argument("--statistics",action="store_true",   help="Print statistics for this run")
     parser.add_argument("--seed",      type=int,              help="Seed")
-    parser.add_argument("--shuffle",   type=int, metavar='N', help=f"Shuffle coeffitient. Default is 4. Higher value gives more randomization, may reduce fairness for short runs")
+    parser.add_argument("--shuffle",   type=int, metavar='N', help=f"Shuffle coefficient. Default is 4. Higher value gives more randomization, may reduce fairness for short runs")
 
     # Parse the command-line arguments
     args = parser.parse_args()
@@ -141,6 +141,7 @@ def parse_arguments():
     if args.seed:       global SEED;                SEED                = args.seed; random.seed(SEED)
     if args.ttrn:       global TTR_NIGHT;           TTR_NIGHT           = args.ttrn
     if args.ttrd:       global TTR_DAY;             TTR_DAY             = args.ttrd
+    if args.graph:      global GRAPH;               GRAPH               = args.graph;
     if args.personal:   global PERSONAL_SCHEDULE;   PERSONAL_SCHEDULE   = args.personal;
     if args.shuffle:    global SHUFFLE_COEFFICIENT; SHUFFLE_COEFFICIENT = args.shuffle;
     if args.statistics: global PRINT_STATISTICS;    PRINT_STATISTICS    = args.statistics;
@@ -720,13 +721,17 @@ def check_fairness(db, schedule):
              f" {str(night_hours_average).ljust(4)}" + "*" * night_hours_average)
     print_delimiter()
     # Adding standard_deviation
-    standard_deviation(hours_served, average)
+    standard_deviation_value = standard_deviation(hours_served, average, True)
     print_delimiter()
+
+    if (GRAPH):
+        # Red line - Average, Green dotted lines - Average ± Standard Deviation, Blue dots - People
+        make_graph(night_hours_served, hours_served, average, night_hours_average, standard_deviation_value)
 
     return 1
 
 ##################################################################################
-def standard_deviation(hours_served, average):
+def standard_deviation(hours_served, average, do_print):
     # In order to calculate the standard deviation you need to calculate the sum of the
     # differences between all the people and the average to the power of 2 and then divide
     # that by the number of people and then square root all of that
@@ -735,9 +740,51 @@ def standard_deviation(hours_served, average):
     for name in hours_served:
         sum_of_delta_hours += math.pow(average - hours_served[name], 2)
     standard_deviation_value = math.sqrt(sum_of_delta_hours/number_of_people)
-    print(f"Standard Deviation:" + " " + str(round(standard_deviation_value, 4)).ljust(28) + ("*" * (round(standard_deviation_value))))
-    return standard_deviation_value
+    # If you want to print set do_print to True
+    if(do_print):
+        print(f"Standard Deviation:" + " " + str(round(standard_deviation_value, 4)).ljust(28) + ("*" * (round(standard_deviation_value))))
+    return round(standard_deviation_value, 4)
 
+##################################################################################
+# Making graph for night_hours
+def make_graph(night_hours_served, hours_served, average, night_hours_average, standard_deviation_value):
+    # Importing inside to avoid errors
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    # Init np arrays
+    y_values = np.array([])
+    x_values = np.array([])
+    y_values_above_average = np.array([])
+    x_values_above_average = np.array([])
+    x_value = 1
+
+    # For loop appending the needed values
+    for name in hours_served:
+        y_value = hours_served[name]
+        y_values = np.append(y_values, y_value)
+        x_values = np.append(x_values, x_value)
+        if(average + standard_deviation_value < y_value or y_value < average - standard_deviation_value):
+            y_values_above_average = np.append(y_values_above_average, y_value)
+            x_values_above_average = np.append(x_values_above_average, x_value)
+        x_value += 1
+
+    # Making lines and plotting points
+    y_value_average = np.array([average, average])
+    x_value_average = np.array([0, x_value])
+    y_value_standard_deviation = np.array([average+standard_deviation_value, average+standard_deviation_value])
+    x_value_standard_deviation = np.array([0, x_value])
+    negative_y_value_standard_deviation = np.array([average-standard_deviation_value, average-standard_deviation_value])
+    negative_x_value_standard_deviation = np.array([0, x_value])
+    plt.plot(x_value_standard_deviation, y_value_standard_deviation, color='green', linestyle='--', linewidth=1.5)
+    plt.plot(negative_x_value_standard_deviation, negative_y_value_standard_deviation, color='green', linestyle='--', linewidth=1.5)
+    plt.plot(x_value_average, y_value_average, color='red')
+    plt.scatter(x_values, y_values)
+    plt.scatter(x_values_above_average, y_values_above_average, color='red')
+    plt.title('Hours Served Graph')
+    plt.xlabel('Serial Number')
+    plt.ylabel('Hours Served')
+    plt.show()
 ##################################################################################
 # Verify result
 def verify(valid_names, schedule):
@@ -901,6 +948,22 @@ def check_positions(schedule, position_names):
     for p in range(NUM_OF_POSITIONS):
         average_str += str(position_average_list[p]).ljust(15)
     print_delimiter_and_str("Average:".ljust(COLUMN_WIDTH+18)+average_str)
+
+    # Print standard deviation
+    hours_in_position = []
+    standard_deviation_value_str = ""
+    # Getting hours_in_position
+    for position in range(NUM_OF_POSITIONS):
+        for name in positions_db:
+            hours_in_position.append(positions_db[name][position])
+
+        for k in range(len(position_average_list)):
+            standard_deviation_value = standard_deviation(hours_in_position, position_average_list[k], False)
+        standard_deviation_value_str += str(standard_deviation_value).ljust(15)
+
+        hours_in_position = []
+
+    print_delimiter_and_str("Standard Deviation:".ljust(COLUMN_WIDTH + 18) + standard_deviation_value_str)
 
 ##################################################################################
 # Calculate average per position
