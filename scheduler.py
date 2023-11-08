@@ -6,6 +6,10 @@
 #######
 # - Allow running without --prev
 # - Add check for the leftest column - error if not starts with 0:00 or other way incorrect
+# - Allow running without generation, only analysis of the existing schedule
+# - For better distribution between positions:
+#   Consider having DB, per position, of people recently served in this position
+#   When assigning for position, out of available people list, lower weigth to the ones recently served
 # - Thinking of adding post processing
 # - Transforming the graph into a heat map with night values or changing the graph to columns graph
 
