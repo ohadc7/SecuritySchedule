@@ -146,7 +146,7 @@ def print_delimiter_and_str(str):
 ##################################################################################
 # Functions
 ##################################################################################
-def parse_arguments():
+def parse_command_line_arguments():
     # Create an ArgumentParser object
     parser = argparse.ArgumentParser(description="Command-line parser")
 
@@ -467,7 +467,7 @@ def resize_team(hour, night_list, ttr_db, old_team, new_team_size, cfg_time_off,
 
 ##################################################################################
 # Build schedule for a single day, based on the previous day
-def build_schedule(prev_date_str, prev_schedule, ttr_db, cfg, day_from_beginning):
+def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, cfg, day_from_beginning):
     schedule = [[] for _ in range(HOURS_IN_DAY)]
     # Stores the current team at the specific position
     # If no action, the same team continues to the next hour
@@ -505,16 +505,13 @@ def build_schedule(prev_date_str, prev_schedule, ttr_db, cfg, day_from_beginning
         # Update TTS (per hour)
         decrement_ttr(ttr_db)
 
-    # Get next sheet name
-    curr_date_str = get_next_date(prev_date_str)
-
     # Print to screen and (optionally) to file
     output_schedule(schedule, curr_date_str, cfg.position_names())
 
     # Check who was idle this day (currently no action follows)
     check_for_idle(ttr_db, schedule)
 
-    return curr_date_str, schedule
+    return schedule
 
 ##################################################################################
 # Print schedule to screen and (optionally) to file
@@ -1067,7 +1064,7 @@ def check_prev_name(prev_name):
         error(f"Previous sheet name must be a valid date in the format '{date_format}'. I know that the example is misleading and I apologize for that :) Will fix")
 
 ##################################################################################
-# Extract all necessary informaton from input file
+# Extract all necessary information from input file
 def parse_input_file(prev_date_str):
     # Create an instance of the Cfg class
     cfg = Cfg()
@@ -1095,7 +1092,7 @@ def parse_input_file(prev_date_str):
 ##################################################################################
 def main():
     # Parse script arguments
-    prev_date_str = parse_arguments()
+    prev_date_str = parse_command_line_arguments()
 
     # Extract all necessary information from input file
     ttr_db, prev_schedule, cfg = parse_input_file(prev_date_str)
@@ -1107,10 +1104,15 @@ def main():
     for day in range(DAYS_TO_PLAN):
 
         # Build next day schedule
-        new_name, new_schedule = build_schedule(prev_date_str, prev_schedule, ttr_db, cfg, day)
-        total_new_schedule     = total_new_schedule + new_schedule
-        prev_date_str          = new_name
-        prev_schedule          = new_schedule
+        curr_date_str = get_next_date(prev_date_str)
+        new_schedule  = build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, cfg, day)
+
+        # Append new_schedule to total
+        total_new_schedule = total_new_schedule + new_schedule
+
+        # Update prev
+        prev_date_str = curr_date_str
+        prev_schedule = new_schedule
 
     # Run checks
     verify(cfg.people_names, total_new_schedule)
