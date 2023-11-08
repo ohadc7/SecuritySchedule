@@ -12,8 +12,6 @@
 #   When assigning for position, out of available people list, lower weigth to the ones recently served
 # - Thinking of adding post processing
 # - Transforming the graph into a heat map with night values or changing the graph to columns graph
-# - Insert all CFG in a single data structure (cfg_people_names, cfg_action, cfg_team_size, cfg_position_names, cfg_time_off)
-#   Currently the argument passing is a bit ugly
 
 # Nadav:
 ########
@@ -99,6 +97,39 @@ night_hours_wr   = [23, 0, 1, 2, 3, 4]
 NONE = 0; SWAP = 1; RESIZE = 2
 # Colors
 PINK = 0; BLUE = 1; GREEN  = 2; YELLOW = 3; PURPLE = 4
+
+
+##################################################################################
+# Class Cfg holds all user configurations
+##################################################################################
+class Cfg:
+    def __init__(self):
+        # Initialize the members
+        self.people_names = []
+        self.time_off = {}
+        self.position = []
+
+    def position_names(self):
+        position_names = []
+        for p in range(NUM_OF_POSITIONS):
+            position_names.append(self.position[p].name)
+        return position_names
+
+##################################################################################
+# Position configuration:
+# - Position name
+# - Per hour team size
+# - Per hour action
+##################################################################################
+class PositionCfg:
+    def __init__(self):
+        # Initialize the members
+        self.name      = ""
+        self.team_size = []
+        self.action    = []
+
+    def print(self):
+        print(f"Position name: {self.name}, actions: {self.action}, team_size: {self.team_size}")
 
 ##################################################################################
 # Utils
@@ -282,39 +313,40 @@ def get_one_day_ahead(prev_date):
     return next_date_reformat
 
 ##################################################################################
-# Get configurations
-# Consider:
-#    CFG[position_index][hour]{action}        = action
-#    CFG[position_index][hour]{team_size}     = team_size
-#    CFG[position_index][hour]{position_name} = position_name (for debug/error messages)
-#    CFG[position_index][hour]{weight}        = weight
-def get_cfg():
-    cfg_action = []
+# Get configurations of all positions
+def get_positions_cfg():
+    # Declare list of positions
+    positions_cfg_list = []
+
     for position in range(NUM_OF_POSITIONS):
         sheet_name = "Position "+str(position+1)
-        position_cfg_action = extract_column_from_sheet(sheet_name, "Action")
-        if len(position_cfg_action) != HOURS_IN_DAY:
-            error("In sheet "+sheet_name+", swap list unexpected length: " + len(position_cfg_action));
-        cfg_action.append(position_cfg_action)
+        single_position_cfg = get_single_position_cfg(sheet_name)
+        positions_cfg_list.append(single_position_cfg)
 
-    cfg_team_size = []
-    for position in range(NUM_OF_POSITIONS):
-        sheet_name = "Position "+str(position+1)
-        position_cfg_team_size = extract_column_from_sheet(sheet_name, "Team size")
-        if len(position_cfg_team_size) != HOURS_IN_DAY:
-            error("In sheet "+sheet_name+", team size list unexpected length: " + len(position_cfg_team_size));
-        position_cfg_team_size_int = []
-        for member in position_cfg_team_size:
-            position_cfg_team_size_int.append(int(member))
-        cfg_team_size.append(position_cfg_team_size)
+    return positions_cfg_list
 
-    cfg_position_name = []
-    for position in range(NUM_OF_POSITIONS):
-        sheet_name = "Position "+str(position+1)
-        names = extract_column_from_sheet(sheet_name, "Name")
-        cfg_position_name.append(names[0][::-1])
+##################################################################################
+# Get configuration of a single position
+def get_single_position_cfg(sheet_name):
+    cfg = PositionCfg()
 
-    return cfg_action, cfg_team_size, cfg_position_name
+    # Get position name
+    names = extract_column_from_sheet(sheet_name, "Name")
+    cfg.name = names[0][::-1]
+
+    # Get actions per hour
+    action_list = extract_column_from_sheet(sheet_name, "Action")
+    if len(action_list) != HOURS_IN_DAY:
+        error("In sheet "+sheet_name+", swap list unexpected length: " + len(action_list));
+    cfg.action = action_list
+
+    # Get team size per hour
+    team_size_list = extract_column_from_sheet(sheet_name, "Team size")
+    if len(team_size_list) != HOURS_IN_DAY:
+        error("In sheet "+sheet_name+", team size list unexpected length: " + len(team_size_list));
+    cfg.team_size = team_size_list
+
+    return cfg
 
 ##################################################################################
 # Get the previous schedule
@@ -324,8 +356,8 @@ def get_prev_schedule(sheet_name, cfg_position_names):
         sheet_name = str(datetime.date.today())
     position_teams = []
     for position in range(NUM_OF_POSITIONS):
-        position_name = cfg_position_names[position][::-1]
-        position_teams.append(extract_column_from_sheet(sheet_name, position_name))
+        position_name = cfg_position_names[position]
+        position_teams.append(extract_column_from_sheet(sheet_name, position_name[::-1]))
 
     for hour in range(HOURS_IN_DAY):
         prev_schedule.append([])
@@ -344,20 +376,17 @@ def get_prev_schedule(sheet_name, cfg_position_names):
 
 ##################################################################################
 # Check for swap - get string, return bool
-def get_action(cfg_action, hour, team_size):
-    swap_str = str(cfg_action[hour])
+def get_action_enum(action_str):
 
     # Check if need to swap
-    if swap_str == 'swap':
+    if action_str == 'swap':
         return SWAP
-    elif swap_str == 'resize':
+    elif action_str == 'resize':
         return RESIZE
-    elif swap_str == 'nan':
+    elif action_str == 'nan':
         return NONE
     else:
-        error('Unrecognized text ' + swap_str)
-
-    return do_swap
+        error('Unrecognized text ' + action_str)
 
 ##################################################################################
 # Choose team
@@ -438,28 +467,28 @@ def resize_team(hour, night_list, ttr_db, old_team, new_team_size, cfg_time_off,
 
 ##################################################################################
 # Build schedule for a single day, based on the previous day
-def build_schedule(prev_date_str, prev_schedule, ttr_db, cfg_people_names, cfg_action, cfg_team_size, cfg_position_names, cfg_time_off, day_from_beginning):
+def build_schedule(prev_date_str, prev_schedule, ttr_db, cfg, day_from_beginning):
     schedule = [[] for _ in range(HOURS_IN_DAY)]
     # Stores the current team at the specific position
     # If no action, the same team continues to the next hour
     teams    = [[] for _ in range(NUM_OF_POSITIONS)]
 
     # Process previous schedule
-    ttr_db, night_list = update_db_with_prev_schedule(cfg_people_names, ttr_db, prev_schedule)
+    ttr_db, night_list = update_db_with_prev_schedule(cfg.people_names, ttr_db, prev_schedule)
 
     # For each hour
     for hour in range(HOURS_IN_DAY):
         # For each position
         for position in range(NUM_OF_POSITIONS):
             # Assign team (should be a function)
-            team_size = cfg_team_size[position][hour]
-            action    = get_action(cfg_action[position], hour, team_size)
+            team_size = cfg.position[position].team_size[hour]
+            action    = get_action_enum(str(cfg.position[position].action[hour]))
             team      = teams[position]
 
             if action == SWAP:
-                team = choose_team(hour, night_list, ttr_db, team_size, cfg_time_off, day_from_beginning)
+                team = choose_team(hour, night_list, ttr_db, team_size, cfg.time_off, day_from_beginning)
             elif action == RESIZE:
-                team = resize_team(hour, night_list, ttr_db, team, team_size, cfg_time_off, day_from_beginning)
+                team = resize_team(hour, night_list, ttr_db, team, team_size, cfg.time_off, day_from_beginning)
             elif hour == 0:
                 team = prev_schedule[HOURS_IN_DAY-1][position]
                 # Note: these people should be recorded as night watchers
@@ -480,7 +509,7 @@ def build_schedule(prev_date_str, prev_schedule, ttr_db, cfg_people_names, cfg_a
     curr_date_str = get_next_date(prev_date_str)
 
     # Print to screen and (optionally) to file
-    output_schedule(schedule, curr_date_str, cfg_position_names)
+    output_schedule(schedule, curr_date_str, cfg.position_names())
 
     # Check who was idle this day (currently no action follows)
     check_for_idle(ttr_db, schedule)
@@ -616,11 +645,11 @@ def update_db_with_prev_schedule(valid_names, db, schedule):
 
 ##################################################################################
 # Print schedule
-def print_schedule(schedule, schedule_name, cfg_position_name):
+def print_schedule(schedule, schedule_name, cfg_position_names):
     print_delimiter_and_str(schedule_name)
     header = "Hour\t"
-    for position in range(NUM_OF_POSITIONS):
-        header += (cfg_position_name[position]).ljust(COLUMN_WIDTH)+"\t"
+    for p in range(NUM_OF_POSITIONS):
+        header += (cfg_position_names[p]).ljust(COLUMN_WIDTH)+"\t"
     print_delimiter_and_str(header)
     print_delimiter()
 
@@ -635,7 +664,7 @@ def print_schedule(schedule, schedule_name, cfg_position_name):
 
 ##################################################################################
 # Write schedule to XLS file
-def write_schedule_to_xls(schedule, sheet_name, cfg_position_name):
+def write_schedule_to_xls(schedule, sheet_name, cfg_position_names):
     # Open an existing Excel file
     workbook = openpyxl.load_workbook(INPUT_FILE_NAME)
 
@@ -651,7 +680,8 @@ def write_schedule_to_xls(schedule, sheet_name, cfg_position_name):
 
     # Build header row
     header_row = ["Time"]
-    for name in cfg_position_name:
+    for p in range(NUM_OF_POSITIONS):
+        name = cfg_position_names[p]
         header_row.append(name[::-1])
     worksheet.append(header_row)
 
@@ -1039,22 +1069,25 @@ def check_prev_name(prev_name):
 ##################################################################################
 # Extract all necessary informaton from input file
 def parse_input_file(prev_date_str):
-    # Get "Time off" information
-    cfg_time_off = extract_time_off_db(prev_date_str)
+    # Create an instance of the Cfg class
+    cfg = Cfg()
 
     # Init TTR DB {name} -> {time to rest}
     ttr_db = init_ttr_db()
 
+    # Get "Time off" information
+    cfg.time_off = extract_time_off_db(prev_date_str)
+
     # Get valid names from the original "List of people"
-    cfg_people_names = ttr_db.keys()
+    cfg.people_names = ttr_db.keys()
 
     # Get configurations
-    cfg_action, cfg_team_size, cfg_position_names = get_cfg()
+    cfg.position = get_positions_cfg()
 
     # Get previous schedule
-    prev_schedule = get_prev_schedule(prev_date_str, cfg_position_names)
+    prev_schedule = get_prev_schedule(prev_date_str, cfg.position_names())
 
-    return ttr_db, prev_schedule, cfg_people_names, cfg_action, cfg_team_size, cfg_position_names, cfg_time_off
+    return ttr_db, prev_schedule, cfg
 
 
 ##################################################################################
@@ -1065,7 +1098,7 @@ def main():
     prev_date_str = parse_arguments()
 
     # Extract all necessary information from input file
-    ttr_db, prev_schedule, cfg_people_names, cfg_action, cfg_team_size, cfg_position_names, cfg_time_off = parse_input_file(prev_date_str)
+    ttr_db, prev_schedule, cfg = parse_input_file(prev_date_str)
 
     # Init total new schedule
     total_new_schedule = prev_schedule.copy()
@@ -1074,16 +1107,16 @@ def main():
     for day in range(DAYS_TO_PLAN):
 
         # Build next day schedule
-        new_name, new_schedule = build_schedule(prev_date_str, prev_schedule, ttr_db, cfg_people_names, cfg_action, cfg_team_size, cfg_position_names, cfg_time_off, day)
+        new_name, new_schedule = build_schedule(prev_date_str, prev_schedule, ttr_db, cfg, day)
         total_new_schedule     = total_new_schedule + new_schedule
         prev_date_str          = new_name
         prev_schedule          = new_schedule
 
     # Run checks
-    verify(cfg_people_names, total_new_schedule)
+    verify(cfg.people_names, total_new_schedule)
     if (PRINT_STATISTICS):
         check_teams(total_new_schedule)
-        check_positions(total_new_schedule, cfg_position_names)
+        check_positions(total_new_schedule, cfg.position_names())
     check_fairness(ttr_db, total_new_schedule)
 
 ##################################################################################
