@@ -68,7 +68,8 @@ TTR_NIGHT           = 9
 TTR_DAY             = 4
 PERSONAL_SCHEDULE   = 0
 PRINT_STATISTICS    = 0
-GRAPH = 0
+GRAPH               = 0
+INPUT_FILE_NAME     = ""
 
 ##################################################################################
 # Constants
@@ -131,11 +132,8 @@ def parse_arguments():
     # Parse the command-line arguments
     args = parser.parse_args()
 
-    # Access the parsed arguments
-    xls_file_name = args.file_name
-    do_write      = args.write
-
     # Configure global variables
+    if args.file_name:  global INPUT_FILE_NAME;     INPUT_FILE_NAME     = args.file_name
     if args.days:       global DAYS_TO_PLAN;        DAYS_TO_PLAN        = args.days
     if args.positions:  global NUM_OF_POSITIONS;    NUM_OF_POSITIONS    = args.positions
     if args.seed:       global SEED;                SEED                = args.seed; random.seed(SEED)
@@ -147,18 +145,19 @@ def parse_arguments():
     if args.statistics: global PRINT_STATISTICS;    PRINT_STATISTICS    = args.statistics;
 
     # Sanity checks
-    if not os.path.exists(xls_file_name):                  error(f"File {xls_file_name} does not exist.")
-    if do_write and not os.access(xls_file_name, os.W_OK): error(f"File {xls_file_name} is not writable.")
+    if not os.path.exists(args.file_name):                    error(f"File {args.file_name} does not exist.")
+    if args.write and not os.access(args.file_name, os.W_OK): error(f"File {args.file_name} is not writable.")
+    check_prev_name(args.prev)
 
-    return args.prev, args.next, xls_file_name, args.write
+    return args.prev, args.next, args.write
 
 ##################################################################################
 # Build DB from "List of people"
 # Key:   name
 # Value: remaining time to rest (TTR) - set to 0
-def build_people_db(xls_file_name):
+def build_people_db():
     # Get list of names from XLS
-    names = extract_column_from_sheet(xls_file_name, "List of people", "People")
+    names = extract_column_from_sheet("List of people", "People")
     # Build people DB
     db = {}
     for name in names:
@@ -170,8 +169,8 @@ def build_people_db(xls_file_name):
 
 ##################################################################################
 # Extract column from sheet
-def extract_column_from_sheet(xls_file_name, sheet_name, column_name):
-    df = pd.read_excel(xls_file_name, sheet_name=sheet_name)
+def extract_column_from_sheet(sheet_name, column_name):
+    df = pd.read_excel(INPUT_FILE_NAME, sheet_name=sheet_name)
     # You can add this and there will be not "nan" but for now out code can deal with NaN (na_filter=False to line 162)
     # Check if the column exists in the DataFrame
     if column_name in df.columns:
@@ -237,12 +236,12 @@ def parse_hours(time_of_inactivity, date_one_day_behind):
     return hour_values
 
 # Taking the "Time off"information from the xlsx file and turning it into a dict for later use
-def extract_time_off_db(xls_file_name, date_one_day_behind):
+def extract_time_off_db(date_one_day_behind):
     # Init all the relevant data from the file
     index_of_time_off = 0
-    names = extract_column_from_sheet(xls_file_name, "List of people", "People")
+    names = extract_column_from_sheet("List of people", "People")
     try:
-        time_off = extract_column_from_sheet(xls_file_name, "List of people", "Time off")
+        time_off = extract_column_from_sheet("List of people", "Time off")
     except:
         error("Please add column 'Time off' next to the People column, at 'List of people' sheet")
     time_off_db = {}
@@ -282,11 +281,11 @@ def get_one_day_ahead(prev_date):
 #    CFG[position_index][hour]{team_size}     = team_size
 #    CFG[position_index][hour]{position_name} = position_name (for debug/error messages)
 #    CFG[position_index][hour]{weight}        = weight
-def get_cfg(xls_file_name):
+def get_cfg():
     cfg_action = []
     for position in range(NUM_OF_POSITIONS):
         sheet_name = "Position "+str(position+1)
-        position_cfg_action = extract_column_from_sheet(xls_file_name, sheet_name, "Action")
+        position_cfg_action = extract_column_from_sheet(sheet_name, "Action")
         if len(position_cfg_action) != HOURS_IN_DAY:
             error("In sheet "+sheet_name+", swap list unexpected length: " + len(position_cfg_action));
         cfg_action.append(position_cfg_action)
@@ -294,7 +293,7 @@ def get_cfg(xls_file_name):
     cfg_team_size = []
     for position in range(NUM_OF_POSITIONS):
         sheet_name = "Position "+str(position+1)
-        position_cfg_team_size = extract_column_from_sheet(xls_file_name, sheet_name, "Team size")
+        position_cfg_team_size = extract_column_from_sheet(sheet_name, "Team size")
         if len(position_cfg_team_size) != HOURS_IN_DAY:
             error("In sheet "+sheet_name+", team size list unexpected length: " + len(position_cfg_team_size));
         position_cfg_team_size_int = []
@@ -305,21 +304,21 @@ def get_cfg(xls_file_name):
     cfg_position_name = []
     for position in range(NUM_OF_POSITIONS):
         sheet_name = "Position "+str(position+1)
-        names = extract_column_from_sheet(xls_file_name, sheet_name, "Name")
+        names = extract_column_from_sheet(sheet_name, "Name")
         cfg_position_name.append(names[0][::-1])
 
     return cfg_action, cfg_team_size, cfg_position_name
 
 ##################################################################################
 # Get the previous schedule
-def get_prev_schedule(xls_file_name, sheet_name, cfg_position_names):
+def get_prev_schedule(sheet_name, cfg_position_names):
     prev_schedule = []
     if not sheet_name:
         sheet_name = str(datetime.date.today())
     position_teams = []
     for position in range(NUM_OF_POSITIONS):
         position_name = cfg_position_names[position][::-1]
-        position_teams.append(extract_column_from_sheet(xls_file_name, sheet_name, position_name))
+        position_teams.append(extract_column_from_sheet(sheet_name, position_name))
 
     for hour in range(HOURS_IN_DAY):
         prev_schedule.append([])
@@ -599,9 +598,9 @@ def print_schedule(schedule, cfg_position_name, schedule_name):
 
 ##################################################################################
 # Write schedule to XLS file
-def write_schedule_to_xls(xls_file_name, schedule, sheet_name, cfg_position_name):
+def write_schedule_to_xls(schedule, sheet_name, cfg_position_name):
     # Open an existing Excel file
-    workbook = openpyxl.load_workbook(xls_file_name)
+    workbook = openpyxl.load_workbook(INPUT_FILE_NAME)
 
     # Get sheet name for output (only if not provided by the user)
     if not sheet_name:
@@ -631,7 +630,7 @@ def write_schedule_to_xls(xls_file_name, schedule, sheet_name, cfg_position_name
     color_worksheet(worksheet)
 
     # Save the workbook to a file
-    workbook.save(xls_file_name)
+    workbook.save(INPUT_FILE_NAME)
 
 ##################################################################################
 # Color the worksheet
@@ -1005,23 +1004,20 @@ def check_prev_name(prev_name):
 ##################################################################################
 def main():
     # Parse script arguments
-    prev_name, next_name, xls_file_name, do_write = parse_arguments()
-
-    check_prev_name(prev_name)
+    prev_name, next_name, do_write = parse_arguments()
 
     # Get "Time off" information
-    time_off_db = extract_time_off_db(xls_file_name, prev_name)
+    time_off_db = extract_time_off_db(prev_name)
 
     # Build TTR DB {name} -> {time to rest}
-    ttr_db = build_people_db(xls_file_name)
+    ttr_db = build_people_db()
     valid_names = ttr_db.keys()
 
     # Get configurations
-    cfg_action, cfg_team_size, cfg_position_name = get_cfg(xls_file_name)
-
+    cfg_action, cfg_team_size, cfg_position_name = get_cfg()
 
     # Get previous schedule
-    prev_schedule = get_prev_schedule(xls_file_name, prev_name, cfg_position_name)
+    prev_schedule = get_prev_schedule(prev_name, cfg_position_name)
     print_schedule(prev_schedule, cfg_position_name, prev_name)
     total_new_schedule = prev_schedule.copy()
 
@@ -1042,7 +1038,7 @@ def main():
             print_personal_info(new_schedule, next_name)
 
         # Write to XLS file
-        if do_write: write_schedule_to_xls(xls_file_name, new_schedule, next_name, cfg_position_name)
+        if do_write: write_schedule_to_xls(new_schedule, next_name, cfg_position_name)
 
         total_new_schedule = total_new_schedule + new_schedule
         prev_schedule      = new_schedule
