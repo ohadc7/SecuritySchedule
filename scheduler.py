@@ -12,6 +12,8 @@
 #   When assigning for position, out of available people list, lower weigth to the ones recently served
 # - Thinking of adding post processing
 # - Transforming the graph into a heat map with night values or changing the graph to columns graph
+# - Insert all CFG in a single data structure (cfg_people_names, cfg_action, cfg_team_size, cfg_position_names, cfg_time_off)
+#   Currently the argument passing is a bit ugly
 
 # Nadav:
 ########
@@ -186,8 +188,8 @@ def extract_column_from_sheet(sheet_name, column_name):
         error(f"Column '{column_name}' not found in '{sheet_name}'.")
 
 # Turning type [13/2 15:00-16:00] to hours in schedule
-def parse_hours(time_of_inactivity, date_one_day_behind):
-    current_date = get_one_day_ahead(date_one_day_behind)
+def parse_hours(time_of_inactivity, prev_date_str):
+    current_date = get_one_day_ahead(prev_date_str)
     hour_values = []
     current_day, current_month = map(int, current_date.split('/'))
     # Checking the time_of_inactivity is not NaN because it breaks the system and says its empty. with (NaN != NaN)
@@ -240,33 +242,33 @@ def parse_hours(time_of_inactivity, date_one_day_behind):
     # Just so there will be a return of an empty list
     return hour_values
 
-# Taking the "Time off"information from the xlsx file and turning it into a dict for later use
+# Taking the "Time off" information from the xlsx file and turning it into a dict for later use
 def extract_time_off_db(date_one_day_behind):
     # Init all the relevant data from the file
     index_of_time_off = 0
     names = extract_column_from_sheet("List of people", "People")
     try:
-        time_off = extract_column_from_sheet("List of people", "Time off")
+        time_off_list = extract_column_from_sheet("List of people", "Time off")
     except:
         error("Please add column 'Time off' next to the People column, at 'List of people' sheet")
-    time_off_db = {}
+    cfg_time_off = {}
     for name in names:
         # Transforming into string in case of a number input
         if type(name) is str:
-            time_off_db[name] = []
+            cfg_time_off[name] = []
             # Checking in the value is NaN (NaN != Nan)
-            if time_off[index_of_time_off] != time_off[index_of_time_off]:
+            if time_off_list[index_of_time_off] != time_off_list[index_of_time_off]:
                 pass
             else:
-                time_off_db[name].append(time_off[index_of_time_off])
+                cfg_time_off[name].append(time_off_list[index_of_time_off])
             index_of_time_off += 1
 
-    for name in time_off_db:
-        if time_off_db[name] != []:
+    for name in cfg_time_off:
+        if cfg_time_off[name] != []:
             # Adding the the name the value that is a list with the hours they cant serve
-            time_off_db[name] = parse_hours(time_off_db[name][0], date_one_day_behind)
-    #print(f"Time off DB: {time_off_db}")
-    return time_off_db
+            cfg_time_off[name] = parse_hours(cfg_time_off[name][0], date_one_day_behind)
+    #print(f"Time off DB: {cfg_time_off}")
+    return cfg_time_off
 
 # Getting a date like "23-1-25" and turning it into "26/1", for the parse_hours function
 def get_one_day_ahead(prev_date):
@@ -359,7 +361,7 @@ def get_action(cfg_action, hour, team_size):
 
 ##################################################################################
 # Choose team
-def choose_team(hour, night_list, ttr_db, team_size, time_off_db, day_from_beginning):
+def choose_team(hour, night_list, ttr_db, team_size, cfg_time_off, day_from_beginning):
     team = []
 
     if hour in night_hours_wr:
@@ -367,7 +369,7 @@ def choose_team(hour, night_list, ttr_db, team_size, time_off_db, day_from_begin
     else:
         is_night = 0
 
-    # The real hour is because the time_off_db
+    # The real hour is because the cfg_time_off
     # dict does not have a day counter its just keeps going so if its a day ahead it will be [24,25,26...]
     # So in order to know we need to find the real_hour
     real_hour = day_from_beginning*24+hour
@@ -384,13 +386,13 @@ def choose_team(hour, night_list, ttr_db, team_size, time_off_db, day_from_begin
         name = get_lowest_ttr(local_db)
 
         # Checks if the hour is overlapping with a known "time off" hour of this person
-        if real_hour in time_off_db[name[::-1]]:
+        if real_hour in cfg_time_off[name[::-1]]:
             # Using for (instead of while)to avoid endless loop
             # Possibly no choice but to take from night watchers
             # Checks if its night and that the personnel is active
             # The else checks just if the personnel is active(in the day hours)
             for k in range(len(local_db)):
-                if real_hour not in time_off_db[name[::-1]]:
+                if real_hour not in cfg_time_off[name[::-1]]:
                     break
                 name = get_lowest_ttr(local_db)
 
@@ -410,7 +412,7 @@ def choose_team(hour, night_list, ttr_db, team_size, time_off_db, day_from_begin
 
 ##################################################################################
 # Resize team
-def resize_team(hour, night_list, ttr_db, old_team, new_team_size, time_off_db, day_from_beginning):
+def resize_team(hour, night_list, ttr_db, old_team, new_team_size, cfg_time_off, day_from_beginning):
 
     if new_team_size == 0:
         return [""]
@@ -430,20 +432,20 @@ def resize_team(hour, night_list, ttr_db, old_team, new_team_size, time_off_db, 
             released = new_team.pop(random_index)
     else:
         # Increase team size
-        new_team += choose_team(hour, night_list, ttr_db, new_team_size-old_team_size, time_off_db, day_from_beginning)
+        new_team += choose_team(hour, night_list, ttr_db, new_team_size - old_team_size, cfg_time_off, day_from_beginning)
 
     return new_team
 
 ##################################################################################
 # Build schedule for a single day, based on the previous day
-def build_schedule(valid_names, prev_date_str, prev_schedule, ttr_db, cfg_action, cfg_team_size, cfg_position_names, time_off_db, day_from_beginning):
+def build_schedule(prev_date_str, prev_schedule, ttr_db, cfg_people_names, cfg_action, cfg_team_size, cfg_position_names, cfg_time_off, day_from_beginning):
     schedule = [[] for _ in range(HOURS_IN_DAY)]
     # Stores the current team at the specific position
     # If no action, the same team continues to the next hour
     teams    = [[] for _ in range(NUM_OF_POSITIONS)]
 
     # Process previous schedule
-    ttr_db, night_list = update_db_with_prev_schedule(valid_names, ttr_db, prev_schedule)
+    ttr_db, night_list = update_db_with_prev_schedule(cfg_people_names, ttr_db, prev_schedule)
 
     # For each hour
     for hour in range(HOURS_IN_DAY):
@@ -455,9 +457,9 @@ def build_schedule(valid_names, prev_date_str, prev_schedule, ttr_db, cfg_action
             team      = teams[position]
 
             if action == SWAP:
-                team = choose_team(hour, night_list, ttr_db, team_size, time_off_db, day_from_beginning)
+                team = choose_team(hour, night_list, ttr_db, team_size, cfg_time_off, day_from_beginning)
             elif action == RESIZE:
-                team = resize_team(hour, night_list, ttr_db, team, team_size, time_off_db, day_from_beginning)
+                team = resize_team(hour, night_list, ttr_db, team, team_size, cfg_time_off, day_from_beginning)
             elif hour == 0:
                 team = prev_schedule[HOURS_IN_DAY-1][position]
                 # Note: these people should be recorded as night watchers
@@ -821,11 +823,11 @@ def make_graph(night_hours_served, hours_served, average, night_hours_average, s
     plt.show()
 ##################################################################################
 # Verify result
-def verify(valid_names, schedule):
+def verify(cfg_people_names, schedule):
 
     # Init last_served
     last_served = {}
-    for name in valid_names:
+    for name in cfg_people_names:
         last_served[name] = -1
 
     # Check schedule
@@ -1035,40 +1037,53 @@ def check_prev_name(prev_name):
         error(f"Previous sheet name must be a valid date in the format '{date_format}'. I know that the example is misleading and I apologize for that :) Will fix")
 
 ##################################################################################
+# Extract all necessary informaton from input file
+def parse_input_file(prev_date_str):
+    # Get "Time off" information
+    cfg_time_off = extract_time_off_db(prev_date_str)
+
+    # Init TTR DB {name} -> {time to rest}
+    ttr_db = init_ttr_db()
+
+    # Get valid names from the original "List of people"
+    cfg_people_names = ttr_db.keys()
+
+    # Get configurations
+    cfg_action, cfg_team_size, cfg_position_names = get_cfg()
+
+    # Get previous schedule
+    prev_schedule = get_prev_schedule(prev_date_str, cfg_position_names)
+
+    return ttr_db, prev_schedule, cfg_people_names, cfg_action, cfg_team_size, cfg_position_names, cfg_time_off
+
+
+##################################################################################
 # Main
 ##################################################################################
 def main():
     # Parse script arguments
     prev_date_str = parse_arguments()
 
-    # Get "Time off" information
-    time_off_db = extract_time_off_db(prev_date_str)
+    # Extract all necessary information from input file
+    ttr_db, prev_schedule, cfg_people_names, cfg_action, cfg_team_size, cfg_position_names, cfg_time_off = parse_input_file(prev_date_str)
 
-    # Build TTR DB {name} -> {time to rest}
-    ttr_db = init_ttr_db()
-    valid_names = ttr_db.keys()
-
-    # Get configurations
-    cfg_action, cfg_team_size, cfg_position_name = get_cfg()
-
-    # Get previous schedule
-    prev_schedule = get_prev_schedule(prev_date_str, cfg_position_name)
+    # Init total new schedule
     total_new_schedule = prev_schedule.copy()
 
     # Build schedule for N days
     for day in range(DAYS_TO_PLAN):
 
         # Build next day schedule
-        new_name, new_schedule = build_schedule(valid_names, prev_date_str, prev_schedule, ttr_db, cfg_action, cfg_team_size, cfg_position_name, time_off_db, day)
+        new_name, new_schedule = build_schedule(prev_date_str, prev_schedule, ttr_db, cfg_people_names, cfg_action, cfg_team_size, cfg_position_names, cfg_time_off, day)
         total_new_schedule     = total_new_schedule + new_schedule
         prev_date_str          = new_name
         prev_schedule          = new_schedule
 
     # Run checks
-    verify(valid_names, total_new_schedule)
+    verify(cfg_people_names, total_new_schedule)
     if (PRINT_STATISTICS):
         check_teams(total_new_schedule)
-        check_positions(total_new_schedule, cfg_position_name)
+        check_positions(total_new_schedule, cfg_position_names)
     check_fairness(ttr_db, total_new_schedule)
 
 ##################################################################################
