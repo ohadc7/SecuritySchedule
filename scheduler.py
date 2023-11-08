@@ -69,6 +69,7 @@ TTR_DAY             = 4
 PERSONAL_SCHEDULE   = 0
 PRINT_STATISTICS    = 0
 GRAPH               = 0
+DO_WRITE            = 0
 INPUT_FILE_NAME     = ""
 
 ##################################################################################
@@ -118,7 +119,6 @@ def parse_arguments():
     parser.add_argument("--positions", type=int, required=True, metavar='N',          help="Number of positions")
 
     # Define the command-line arguments - optional
-    parser.add_argument("--next",      type=str,              help="Next schedule sheet name (optional, default is the day after prev")
     parser.add_argument("--days",      type=int,              help="Number of days to schedule")
     parser.add_argument("--ttrn",      type=int,              help="Minimum time to rest after NIGHT shift")
     parser.add_argument("--ttrd",      type=int,              help="Minimum time to rest after DAY shift")
@@ -140,22 +140,23 @@ def parse_arguments():
     if args.ttrn:       global TTR_NIGHT;           TTR_NIGHT           = args.ttrn
     if args.ttrd:       global TTR_DAY;             TTR_DAY             = args.ttrd
     if args.graph:      global GRAPH;               GRAPH               = args.graph;
+    if args.write:      global DO_WRITE;            DO_WRITE            = args.write;
     if args.personal:   global PERSONAL_SCHEDULE;   PERSONAL_SCHEDULE   = args.personal;
     if args.shuffle:    global SHUFFLE_COEFFICIENT; SHUFFLE_COEFFICIENT = args.shuffle;
     if args.statistics: global PRINT_STATISTICS;    PRINT_STATISTICS    = args.statistics;
 
     # Sanity checks
     if not os.path.exists(args.file_name):                    error(f"File {args.file_name} does not exist.")
-    if args.write and not os.access(args.file_name, os.W_OK): error(f"File {args.file_name} is not writable.")
+    if DO_WRITE and not os.access(args.file_name, os.W_OK): error(f"File {args.file_name} is not writable.")
     check_prev_name(args.prev)
 
-    return args.prev, args.next, args.write
+    return args.prev
 
 ##################################################################################
 # Build DB from "List of people"
 # Key:   name
 # Value: remaining time to rest (TTR) - set to 0
-def build_people_db():
+def init_ttr_db():
     # Get list of names from XLS
     names = extract_column_from_sheet("List of people", "People")
     # Build people DB
@@ -330,6 +331,9 @@ def get_prev_schedule(sheet_name, cfg_position_names):
                 team_list = team_str.split(",")
             prev_schedule[hour].append(team_list)
 
+    # Print the schedule
+    print_schedule(prev_schedule, sheet_name, cfg_position_names)
+
     return prev_schedule
 
 ##################################################################################
@@ -427,16 +431,21 @@ def resize_team(hour, night_list, ttr_db, old_team, new_team_size, time_off_db, 
     return new_team
 
 ##################################################################################
-# Make the assignments
-def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size, time_off_db, day_from_beginning):
+# Build schedule for a single day, based on the previous day
+def build_schedule(valid_names, prev_date_str, prev_schedule, ttr_db, cfg_action, cfg_team_size, cfg_position_names, time_off_db, day_from_beginning):
     schedule = [[] for _ in range(HOURS_IN_DAY)]
     # Stores the current team at the specific position
     # If no action, the same team continues to the next hour
     teams    = [[] for _ in range(NUM_OF_POSITIONS)]
 
+    # Process previous schedule
+    ttr_db, night_list = update_db_with_prev_schedule(valid_names, ttr_db, prev_schedule)
+
+    # For each hour
     for hour in range(HOURS_IN_DAY):
-        # Choose teams
+        # For each position
         for position in range(NUM_OF_POSITIONS):
+            # Assign team (should be a function)
             team_size = cfg_team_size[position][hour]
             action    = get_action(cfg_action[position], hour, team_size)
             team      = teams[position]
@@ -451,6 +460,7 @@ def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size,
                 # They are not on the list, because they started the shift at "day hours" (23:00)
                 for name in team:
                     night_list.append(name)
+
             # Put the team in the schedule
             schedule[hour].append(team)
             teams[position] = team
@@ -460,7 +470,28 @@ def build_schedule(prev_schedule, night_list, ttr_db, cfg_action, cfg_team_size,
         # Update TTS (per hour)
         decrement_ttr(ttr_db)
 
-    return schedule
+    # Get next sheet name
+    curr_date_str = get_next_date(prev_date_str)
+
+    # Print to screen and (optionally) to file
+    output_schedule(schedule, curr_date_str, cfg_position_names)
+
+    # Check who was idle this day (currently no action follows)
+    check_for_idle(ttr_db, schedule)
+
+    return curr_date_str, schedule
+
+##################################################################################
+# Print schedule to screen and (optionally) to file
+def output_schedule(schedule, date_str, cfg_position_names):
+    # Print to screen
+    print_schedule(schedule, date_str, cfg_position_names)
+    if PERSONAL_SCHEDULE:
+        print_personal_info(schedule, date_str)
+
+    # Write to XLS file
+    if DO_WRITE: write_schedule_to_xls(schedule, date_str, cfg_position_names)
+
 ##################################################################################
 # DB utils
 
@@ -575,11 +606,11 @@ def update_db_with_prev_schedule(valid_names, db, schedule):
         # Update TTS (for each hour, not for each position)
         decrement_ttr(db)
 
-    return night_list
+    return db, night_list
 
 ##################################################################################
 # Print schedule
-def print_schedule(schedule, cfg_position_name, schedule_name):
+def print_schedule(schedule, schedule_name, cfg_position_name):
     print_delimiter_and_str(schedule_name)
     header = "Hour\t"
     for position in range(NUM_OF_POSITIONS):
@@ -1004,44 +1035,30 @@ def check_prev_name(prev_name):
 ##################################################################################
 def main():
     # Parse script arguments
-    prev_name, next_name, do_write = parse_arguments()
+    prev_date_str = parse_arguments()
 
     # Get "Time off" information
-    time_off_db = extract_time_off_db(prev_name)
+    time_off_db = extract_time_off_db(prev_date_str)
 
     # Build TTR DB {name} -> {time to rest}
-    ttr_db = build_people_db()
+    ttr_db = init_ttr_db()
     valid_names = ttr_db.keys()
 
     # Get configurations
     cfg_action, cfg_team_size, cfg_position_name = get_cfg()
 
     # Get previous schedule
-    prev_schedule = get_prev_schedule(prev_name, cfg_position_name)
-    print_schedule(prev_schedule, cfg_position_name, prev_name)
+    prev_schedule = get_prev_schedule(prev_date_str, cfg_position_name)
     total_new_schedule = prev_schedule.copy()
 
     # Build schedule for N days
     for day in range(DAYS_TO_PLAN):
 
-        # Process previous schedule
-        prev_night_list = update_db_with_prev_schedule(valid_names, ttr_db, prev_schedule)
-
         # Build next day schedule
-        new_schedule = build_schedule(prev_schedule, prev_night_list, ttr_db, cfg_action, cfg_team_size, time_off_db, day)
-        check_for_idle(ttr_db, new_schedule)
-        # Get next sheet name
-        next_name = get_next_date(prev_name)
-        prev_name = next_name
-        print_schedule(new_schedule, cfg_position_name, next_name)
-        if PERSONAL_SCHEDULE:
-            print_personal_info(new_schedule, next_name)
-
-        # Write to XLS file
-        if do_write: write_schedule_to_xls(new_schedule, next_name, cfg_position_name)
-
-        total_new_schedule = total_new_schedule + new_schedule
-        prev_schedule      = new_schedule
+        new_name, new_schedule = build_schedule(valid_names, prev_date_str, prev_schedule, ttr_db, cfg_action, cfg_team_size, cfg_position_name, time_off_db, day)
+        total_new_schedule     = total_new_schedule + new_schedule
+        prev_date_str          = new_name
+        prev_schedule          = new_schedule
 
     # Run checks
     verify(valid_names, total_new_schedule)
