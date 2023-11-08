@@ -4,6 +4,7 @@
 
 # TODO:
 #######
+# - Make class: TtrDB
 # - Allow running without --prev
 # - Add check for the leftest column - error if not starts with 0:00 or other way incorrect
 # - Allow running without generation, only analysis of the existing schedule
@@ -97,7 +98,6 @@ night_hours_wr   = [23, 0, 1, 2, 3, 4]
 NONE = 0; SWAP = 1; RESIZE = 2
 # Colors
 PINK = 0; BLUE = 1; GREEN  = 2; YELLOW = 3; PURPLE = 4
-
 
 ##################################################################################
 # Class Cfg holds all user configurations
@@ -219,17 +219,18 @@ def extract_column_from_sheet(sheet_name, column_name):
         error(f"Column '{column_name}' not found in '{sheet_name}'.")
 
 # Turning type [13/2 15:00-16:00] to hours in schedule
-def parse_hours(time_of_inactivity, prev_date_str):
+def parse_hours(single_person_time_off, prev_date_str):
     current_date = get_one_day_ahead(prev_date_str)
     hour_values = []
     current_day, current_month = map(int, current_date.split('/'))
-    # Checking the time_of_inactivity is not NaN because it breaks the system and says its empty. with (NaN != NaN)
-    if time_of_inactivity == time_of_inactivity:
+    # Checking the single_person_time_off is not NaN because it breaks the system and says its empty. with (NaN != NaN)
+    #if single_person_time_off == single_person_time_off:
+    if single_person_time_off == single_person_time_off:
         # If its a single date, it changes the type of the variable to date so it is way easier to just add a dot.
-        if '.' in time_of_inactivity:
-            time_of_inactivity = time_of_inactivity[0:len(time_of_inactivity)-1]
-            day, month = map(int, time_of_inactivity.split('/'))
-            if time_of_inactivity == current_date:
+        if '.' in single_person_time_off:
+            single_person_time_off = single_person_time_off[0:len(single_person_time_off) - 1]
+            day, month = map(int, single_person_time_off.split('/'))
+            if single_person_time_off == current_date:
                 for i in range(HOURS_IN_DAY):
                     hour_values.append(i)
             else:
@@ -239,7 +240,7 @@ def parse_hours(time_of_inactivity, prev_date_str):
         # In any other case that there is more then one date or a date with an hour range
         else:
             # Splitting into different dates and times
-            date_time_intervals = time_of_inactivity.split(',')
+            date_time_intervals = single_person_time_off.split(',')
             for date_time_range in date_time_intervals:
                 # Splitting to date and time range
                 if (len(date_time_range) < 8):
@@ -274,7 +275,7 @@ def parse_hours(time_of_inactivity, prev_date_str):
     return hour_values
 
 # Taking the "Time off" information from the xlsx file and turning it into a dict for later use
-def extract_time_off_db(date_one_day_behind):
+def extract_time_off_db(prev_date_str):
     # Init all the relevant data from the file
     index_of_time_off = 0
     names = extract_column_from_sheet("List of people", "People")
@@ -282,23 +283,23 @@ def extract_time_off_db(date_one_day_behind):
         time_off_list = extract_column_from_sheet("List of people", "Time off")
     except:
         error("Please add column 'Time off' next to the People column, at 'List of people' sheet")
+
     cfg_time_off = {}
-    for name in names:
+    for backwards_name in names:
         # Transforming into string in case of a number input
-        if type(name) is str:
+        # FIXME: no transforming here, will just skip non str - FIX
+        if type(backwards_name) is str:
+            name = backwards_name[::-1]
             cfg_time_off[name] = []
-            # Checking in the value is NaN (NaN != Nan)
-            if time_off_list[index_of_time_off] != time_off_list[index_of_time_off]:
-                pass
-            else:
+            if str(time_off_list[index_of_time_off]):
                 cfg_time_off[name].append(time_off_list[index_of_time_off])
             index_of_time_off += 1
 
     for name in cfg_time_off:
         if cfg_time_off[name] != []:
             # Adding the the name the value that is a list with the hours they cant serve
-            cfg_time_off[name] = parse_hours(cfg_time_off[name][0], date_one_day_behind)
-    #print(f"Time off DB: {cfg_time_off}")
+            cfg_time_off[name] = parse_hours(cfg_time_off[name][0], prev_date_str)
+
     return cfg_time_off
 
 # Getting a date like "23-1-25" and turning it into "26/1", for the parse_hours function
@@ -403,36 +404,37 @@ def choose_team(hour, night_list, ttr_db, team_size, cfg_time_off, day_from_begi
     # So in order to know we need to find the real_hour
     real_hour = day_from_beginning*24+hour
     for i in range(team_size):
-        # Build local db
-        local_db = {}
+        # Build local db - exclude previous night watchers
+        local_ttr_db = {}
         for item in ttr_db.items():
             name = item[0]
             ttr  = item[1]
             # If is night, do not add previous night watchers to local_db
             if not (is_night and name in night_list):
-                local_db[name] = ttr
+                local_ttr_db[name] = ttr
 
-        name = get_lowest_ttr(local_db)
+        name = get_lowest_ttr(local_ttr_db)
 
         # Checks if the hour is overlapping with a known "time off" hour of this person
-        if real_hour in cfg_time_off[name[::-1]]:
+        if real_hour in cfg_time_off[name]:
+            print(f"{name} is on vacation")
             # Using for (instead of while)to avoid endless loop
             # Possibly no choice but to take from night watchers
             # Checks if its night and that the personnel is active
             # The else checks just if the personnel is active(in the day hours)
-            for k in range(len(local_db)):
-                if real_hour not in cfg_time_off[name[::-1]]:
+            for k in range(len(local_ttr_db)):
+                if real_hour not in cfg_time_off[name]:
                     break
-                name = get_lowest_ttr(local_db)
+                name = get_lowest_ttr(local_ttr_db)
 
-            # Check fairness
-            if ttr_db[name] > 0:
-                error(f"Chosen {name} with TTR {ttr_db[name]}\n")
+        # Check fairness
+        if ttr_db[name] > 0:
+            error(f"Chosen {name} with TTR {ttr_db[name]}\n")
 
-            # Added if because of a change in the code, we only need to run this "if" if its night time so added a check
-            if is_night == 1:
-                if name in night_list:
-                    error(f"At {hour}:00, the chosen one has already served last night")
+        # Added if because of a change in the code, we only need to run this "if" if its night time so added a check
+        if is_night == 1:
+            if name in night_list:
+                error(f"At {hour}:00, the chosen one has already served last night")
 
         set_ttr(hour, name, ttr_db)
         team.append(name)
@@ -441,6 +443,8 @@ def choose_team(hour, night_list, ttr_db, team_size, cfg_time_off, day_from_begi
 
 ##################################################################################
 # Resize team
+# Do not replace all team members, but, based on the previous team,
+# release or add N members
 def resize_team(hour, night_list, ttr_db, old_team, new_team_size, cfg_time_off, day_from_beginning):
 
     if new_team_size == 0:
@@ -471,9 +475,10 @@ def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, cfg, day_fro
     schedule = [[] for _ in range(HOURS_IN_DAY)]
     # Stores the current team at the specific position
     # If no action, the same team continues to the next hour
-    teams    = [[] for _ in range(NUM_OF_POSITIONS)]
+    # FIXME: use [hour-1]?
+    prev_team = [[] for _ in range(NUM_OF_POSITIONS)]
 
-    # Process previous schedule
+    # Get TTR information from the previous schedule
     ttr_db, night_list = update_db_with_prev_schedule(cfg.people_names, ttr_db, prev_schedule)
 
     # For each hour
@@ -483,7 +488,7 @@ def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, cfg, day_fro
             # Assign team (should be a function)
             team_size = cfg.position[position].team_size[hour]
             action    = get_action_enum(str(cfg.position[position].action[hour]))
-            team      = teams[position]
+            team      = prev_team[position]
 
             if action == SWAP:
                 team = choose_team(hour, night_list, ttr_db, team_size, cfg.time_off, day_from_beginning)
@@ -498,11 +503,11 @@ def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, cfg, day_fro
 
             # Put the team in the schedule
             schedule[hour].append(team)
-            teams[position] = team
-            # Even if there was no swap, the chosen team should get its TTS
+            prev_team[position] = team
+            # Even if there was no swap, the chosen team should get its time to rest
             for name in team: set_ttr(hour, name, ttr_db)
 
-        # Update TTS (per hour)
+        # End of hour - update TTR
         decrement_ttr(ttr_db)
 
     # Print to screen and (optionally) to file
@@ -560,13 +565,14 @@ def print_db(header, db):
     for name in db:
         print(f"{name.ljust(COLUMN_WIDTH)}{db[name]}")
 
+##################################################################################
 # Getting the lowest items and keys of the values for an "n" amount of numbers above the lowest ttr
 # Returns the names with ttr in [TTR, TTR+1, TTR+2, ... TTR+n-1]
-def get_list_of_lowest_ttrs(db, n):
+def get_list_of_lowest_ttrs(ttr_db):
 
-    # Get list of all available ttrs
+    # Get list of all available TTRs
     list_of_unique_available_ttrs = []
-    for item in db.items():
+    for item in ttr_db.items():
         if item[1] not in list_of_unique_available_ttrs:
             list_of_unique_available_ttrs.append(item[1])
 
@@ -574,11 +580,11 @@ def get_list_of_lowest_ttrs(db, n):
     sorted_list_of_ttrs = sorted(list_of_unique_available_ttrs)
 
     # Get N lowest TTRs
-    list_of_n_lowest_ttrs = sorted_list_of_ttrs[:n]
+    list_of_n_lowest_ttrs = sorted_list_of_ttrs[:SHUFFLE_COEFFICIENT]
 
     # Get list of names (only for negative TTRs)
     names_with_lowest_ttrs = []
-    for item in db.items():
+    for item in ttr_db.items():
         name = item[0]
         ttr  = item[1]
         if ttr < 0 and ttr in list_of_n_lowest_ttrs:
@@ -586,23 +592,13 @@ def get_list_of_lowest_ttrs(db, n):
 
     return names_with_lowest_ttrs
 
+##################################################################################
 # Get the name with lowest TTR value
 # Offset allows to skip N lowest values
-def get_lowest_ttr(db, offset=0):
-    # Sort the dictionary by values in ascending order
-    # To sort in descending order, add `, reverse=True` to the sorted function
-    sorted_db = dict(sorted(db.items(), key=lambda item: item[1]))
-
-    # Get the keys to remove (first N keys)
-    keys_to_remove = list(sorted_db.keys())[:offset]
-
-    # Remove the items with the selected keys
-    for key in keys_to_remove:
-        del sorted_db[key]
-
+def get_lowest_ttr(ttr_db):
     # Get all names for with <SHUFFLE_COEFFICIENT> TTRs
     # (TTR, TTR+1, ... , TTR+SHUFFLE_COEFFICIENT-1)
-    all_names_with_lowest_ttr = get_list_of_lowest_ttrs(db, SHUFFLE_COEFFICIENT)
+    all_names_with_lowest_ttr = get_list_of_lowest_ttrs(ttr_db)
 
     # Choose random name
     shuffled_list_of_names = random.sample(all_names_with_lowest_ttr, len(all_names_with_lowest_ttr))
