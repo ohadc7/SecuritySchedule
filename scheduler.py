@@ -965,6 +965,10 @@ def check_positions(schedule, position_names):
     # Build DB, for each name, list of positions
     # Each member will reflect hours spent in this position
     positions_db = {}
+    position_names_db = {}
+    position_idx = 0
+    hour_idx = 1
+    warn_cnt = 0
 
     # Collect data from schedule
     for hour in range(len(schedule)):
@@ -983,6 +987,30 @@ def check_positions(schedule, position_names):
                         positions_db[name].append(0)
                 # Update
                 positions_db[name][position]   += 1
+                
+                # Init entries with -1 (as 0 is real position):
+                if name not in position_names_db:
+                    position_names_db[name] = []
+                    for p in range(NUM_OF_POSITIONS):
+                        position_names_db[name].append(-1)   
+                 
+                # Sample DB:                   
+                samp_position = position_names_db[name][position_idx]          
+                samp_hour     = position_names_db[name][hour_idx]   
+                hour_diff     = hour - samp_hour 
+                               
+                # Compare, and avoid fail if belongs to same entry:
+                if samp_position == position and hour_diff > 2 and hour > 24:
+                    warning(f"name: {name} ,hour: {hour}:00, got again the same position: {position_names[position]}. Last hour: {samp_hour}")
+                    warn_cnt += 1
+                
+                # Update DB:   
+                position_names_db[name][position_idx]   = position
+                position_names_db[name][hour_idx]   = hour               
+    
+    if warn_cnt > 5:
+        error(f"Got too many repetitions {warn_cnt}")
+                  
 
     # Print header (with position names)
     header_str = "Positions summary".ljust(COLUMN_WIDTH+18)
@@ -1112,6 +1140,10 @@ def main():
     if (PRINT_STATISTICS):
         check_teams(total_new_schedule)
         check_positions(total_new_schedule, cfg.position_names())
+        
+        
+        
+    check_positions(total_new_schedule, cfg.position_names())
     check_fairness(ttr_db, total_new_schedule)
 
 ##################################################################################
