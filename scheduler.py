@@ -202,7 +202,6 @@ def init_ttr_db():
         if type(name) is str:
             db[name[::-1]] = 0
 
-    print(f"Found {len(db.keys())} people in List of people: {db.keys()}")
     return db
 
 ##################################################################################
@@ -278,27 +277,26 @@ def parse_hours(single_person_time_off, prev_date_str):
 def extract_time_off_db(prev_date_str):
     # Init all the relevant data from the file
     index_of_time_off = 0
-    names = extract_column_from_sheet("List of people", "People")
+    list_of_names = extract_column_from_sheet("List of people", "People")
     try:
-        time_off_list = extract_column_from_sheet("List of people", "Time off")
+        list_of_times = extract_column_from_sheet("List of people", "Time off")
     except:
         error("Please add column 'Time off' next to the People column, at 'List of people' sheet")
 
     cfg_time_off = {}
-    for backwards_name in names:
-        # Transforming into string in case of a number input
-        # FIXME: no transforming here, will just skip non str - FIX
-        if type(backwards_name) is str:
-            name = backwards_name[::-1]
-            cfg_time_off[name] = []
-            if str(time_off_list[index_of_time_off]):
-                cfg_time_off[name].append(time_off_list[index_of_time_off])
-            index_of_time_off += 1
+    for i in range(len(list_of_names)):
+        name = list_of_names[i][::-1]
+        if str(list_of_times[i]) == 'nan':
+            cfg_time_off[name] = ""
+        else:
+            cfg_time_off[name] = list_of_times[i]
 
     for name in cfg_time_off:
-        if cfg_time_off[name] != []:
+        if cfg_time_off[name] == "":
+            cfg_time_off[name] = []
+        else:
             # Adding the the name the value that is a list with the hours they cant serve
-            cfg_time_off[name] = parse_hours(cfg_time_off[name][0], prev_date_str)
+            cfg_time_off[name] = parse_hours(cfg_time_off[name], prev_date_str)
 
     return cfg_time_off
 
@@ -417,7 +415,6 @@ def choose_team(hour, night_list, ttr_db, team_size, cfg_time_off, day_from_begi
 
         # Checks if the hour is overlapping with a known "time off" hour of this person
         if real_hour in cfg_time_off[name]:
-            print(f"{name} is on vacation")
             # Using for (instead of while)to avoid endless loop
             # Possibly no choice but to take from night watchers
             # Checks if its night and that the personnel is active
@@ -428,8 +425,8 @@ def choose_team(hour, night_list, ttr_db, team_size, cfg_time_off, day_from_begi
                 name = get_lowest_ttr(local_ttr_db)
 
         # Check fairness
-        if ttr_db[name] > 0:
-            error(f"Chosen {name} with TTR {ttr_db[name]}\n")
+        if ttr_db[name] > 0:                error(f"Chosen {name} with TTR {ttr_db[name]}\n")
+        if real_hour in cfg_time_off[name]: error(f"Chosen {name} which is on vacation (try --shuffle {SHUFFLE_COEFFICIENT+1})\n")
 
         # Added if because of a change in the code, we only need to run this "if" if its night time so added a check
         if is_night == 1:
