@@ -634,15 +634,6 @@ def decrement_ttr(db):
         db[name] -= 1
 
 
-# Get available people from DB (with TTR == 0)
-def get_available(db):
-    available = []
-    for name, ttr in db.items():
-        if ttr == 0:
-            available.append(name)
-    return available
-
-
 # Print DB
 def print_db(header, db):
     print(header)
@@ -655,16 +646,16 @@ def print_db(header, db):
 # Returns the names with ttr in [TTR, TTR+1, TTR+2, ... TTR+n-1]
 def get_list_of_lowest_ttrs(ttr_db):
     # Get list of all available TTRs
-    list_of_unique_available_ttrs = []
+    list_of_unique_available_ttr_values = []
     for item in ttr_db.items():
-        if item[1] not in list_of_unique_available_ttrs:
-            list_of_unique_available_ttrs.append(item[1])
+        if item[1] not in list_of_unique_available_ttr_values:
+            list_of_unique_available_ttr_values.append(item[1])
 
     # Sort the list
-    sorted_list_of_ttrs = sorted(list_of_unique_available_ttrs)
+    sorted_list_of_ttr_values = sorted(list_of_unique_available_ttr_values)
 
     # Get N lowest TTRs
-    list_of_n_lowest_ttrs = sorted_list_of_ttrs[:SHUFFLE_COEFFICIENT]
+    list_of_n_lowest_ttrs = sorted_list_of_ttr_values[:SHUFFLE_COEFFICIENT]
 
     # Get list of names (only for negative TTRs)
     names_with_lowest_ttrs = []
@@ -1032,7 +1023,7 @@ def print_personal_info(schedule, date):
 
 
 ##################################################################################
-# Print information that can be usefule for debug
+# Print information that can be useful for debug
 def print_debug_info():
     print_delimiter_and_str(f"Current seed: {SEED}")
 
@@ -1066,11 +1057,18 @@ def check_teams(schedule):
 
 ##################################################################################
 # Check distribution of people between positions
+# DBs:
+# time_spent_at_position:
+#   {person_name} --> [list of hours spent in each position]
+#   Used to see accumulated time at each position, for each person
+# per_person_prev_position:
+#   {person_name} --> [previous position name, previous absolute hour]
+#   Used to detect assignment to the same position
 def check_positions(schedule, position_names):
     # Build DB, for each name, list of positions
     # Each member will reflect hours spent in this position
-    positions_db = {}
-    position_names_db = {}
+    time_spent_at_position = {}
+    per_person_prev_position = {}
     position_idx = 0
     hour_idx = 1
     warn_cnt = 0
@@ -1086,22 +1084,22 @@ def check_positions(schedule, position_names):
             # Update DB
             for name in team:
                 # Init new entry with list of zeros
-                if name not in positions_db:
-                    positions_db[name] = []
+                if name not in time_spent_at_position:
+                    time_spent_at_position[name] = []
                     for p in range(NUM_OF_POSITIONS):
-                        positions_db[name].append(0)
+                        time_spent_at_position[name].append(0)
                 # Update
-                positions_db[name][position] += 1
+                time_spent_at_position[name][position] += 1
 
                 # Init entries with -1 (as 0 is real position):
-                if name not in position_names_db:
-                    position_names_db[name] = []
+                if name not in per_person_prev_position:
+                    per_person_prev_position[name] = []
                     for p in range(NUM_OF_POSITIONS):
-                        position_names_db[name].append(-1)
+                        per_person_prev_position[name].append(-1)
 
-                        # Sample DB:
-                samp_position = position_names_db[name][position_idx]
-                samp_hour = position_names_db[name][hour_idx]
+                # Sample DB:
+                samp_position = per_person_prev_position[name][position_idx]
+                samp_hour = per_person_prev_position[name][hour_idx]
                 hour_diff = hour - samp_hour
 
                 # Compare, and avoid fail if belongs to same entry:
@@ -1111,8 +1109,8 @@ def check_positions(schedule, position_names):
                     warn_cnt += 1
 
                 # Update DB:   
-                position_names_db[name][position_idx] = position
-                position_names_db[name][hour_idx] = hour
+                per_person_prev_position[name][position_idx] = position
+                per_person_prev_position[name][hour_idx] = hour
 
     if warn_cnt > 5:
         error(f"Got too many repetitions {warn_cnt}")
@@ -1125,15 +1123,15 @@ def check_positions(schedule, position_names):
     print_delimiter()
 
     # Print summary per person
-    for name in positions_db:
+    for name in time_spent_at_position:
         positions_str = ""
         for p in range(NUM_OF_POSITIONS):
-            positions_str += str(positions_db[name][p]).ljust(15)
+            positions_str += str(time_spent_at_position[name][p]).ljust(15)
         print(f"Name: {name.ljust(COLUMN_WIDTH)} positions: {positions_str}")
 
     # Print averages
     average_str = ""
-    position_average_list = get_position_average_list(positions_db)
+    position_average_list = get_position_average_list(time_spent_at_position)
     for p in range(NUM_OF_POSITIONS):
         average_str += str(position_average_list[p]).ljust(15)
     print_delimiter_and_str("Average:".ljust(COLUMN_WIDTH + 18) + average_str)
@@ -1143,8 +1141,8 @@ def check_positions(schedule, position_names):
     standard_deviation_value_str = ""
     # Getting hours_in_position
     for position in range(NUM_OF_POSITIONS):
-        for name in positions_db:
-            hours_in_position.append(positions_db[name][position])
+        for name in time_spent_at_position:
+            hours_in_position.append(time_spent_at_position[name][position])
 
         for k in range(len(position_average_list)):
             standard_deviation_value = standard_deviation(hours_in_position, position_average_list[k], False)
