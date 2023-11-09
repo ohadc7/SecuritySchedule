@@ -1143,7 +1143,6 @@ def main():
         
         
         
-    check_positions(total_new_schedule, cfg.position_names())
     check_fairness(ttr_db, total_new_schedule)
 
 ##################################################################################
