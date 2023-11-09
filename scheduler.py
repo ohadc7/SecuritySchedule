@@ -429,38 +429,33 @@ def choose_team(hour, night_list, ttr_db, team_size, cfg, day_from_beginning):
 
     # Build team
     for i in range(team_size):
-        # Build local db - exclude previous night watchers
-        local_ttr_db = copy_exclude_ttr_db(ttr_db, is_night, night_list)
+        # Build local db - exclude previous night watchers & people not available at this time
+        local_ttr_db = get_available_ttr_db(ttr_db, is_night, night_list, real_hour, cfg)
 
         # Choose team member
-        name = choose_team_member(local_ttr_db, real_hour, cfg)
+        name = choose_team_member(local_ttr_db)
 
         # Check for violations
         verify_team_member(name, ttr_db, is_night, real_hour, night_list, cfg)
 
         # Update TTR
-        set_ttr(hour, name, ttr_db)
         team.append(name)
+        set_ttr(hour, name, ttr_db)
+        # Ido: add here position DB update
 
     return team
 
 
 ##################################################################################
 # Choose a single person
-def choose_team_member(ttr_db, real_hour, cfg):
+def choose_team_member(ttr_db):
 
-    # Try lowest TTR
+    # Get lowest TTR
+    # Ido: add consideration of position DB
     name = get_lowest_ttr(ttr_db)
 
-    # Checks personal constraints, using for (instead of while) to avoid endless loop
-    for k in range(len(ttr_db)):
-        if is_available(name, real_hour, cfg):
-            break
-        else:
-            # Retry
-            name = get_lowest_ttr(ttr_db)
-
     return name
+
 
 ##################################################################################
 # Check chosen team member for violations
@@ -477,19 +472,35 @@ def verify_team_member(name, ttr_db, is_night, absolute_hour, night_list, cfg):
 
     return
 
+
 ##################################################################################
-# Copy ttr_db, but exclude people on the list
-# Currently used to exclude previous night watchers from the DB
-def copy_exclude_ttr_db(ttr_db, exclude_condition, exclude_list):
-    local_ttr_db = {}
+# Build ttr_db, but only people available to be chosen
+def get_available_ttr_db(ttr_db, is_night, night_list, real_hour, cfg):
+    # Init
+    available_ttr_db = {}
+
+    # Build available people DB
     for item in ttr_db.items():
         name = item[0]
         ttr = item[1]
-        # If is night, do not add previous night watchers to local_db
-        if not (exclude_condition and name in exclude_list):
-            local_ttr_db[name] = ttr
 
-    return local_ttr_db
+        # If is night, do not add previous night watchers to local_db
+        if is_night and name in night_list:
+            continue
+
+        # Do not add people not available due to time off/on
+        if not is_available(name, real_hour, cfg):
+            continue
+
+        # Exclude people with positive TTR (didn't get their rest yet)
+        if ttr_db[name] > 0:
+            continue
+
+        # If got this far, the person is available
+        available_ttr_db[name] = ttr
+
+    return available_ttr_db
+
 
 ##################################################################################
 # Check if the person is available at the specified hour
@@ -505,6 +516,7 @@ def is_available(name, real_hour, cfg):
 
     # Default
     return 1
+
 
 ##################################################################################
 # Resize team
