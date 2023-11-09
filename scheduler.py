@@ -1,4 +1,3 @@
-
 # The algorithm is based on TTR
 # TTR == Time to rest
 
@@ -55,49 +54,56 @@ import copy
 
 # For writing XLS file
 import openpyxl
-from openpyxl.styles               import PatternFill
-from openpyxl.utils.units          import cm_to_EMU
+from openpyxl.styles import PatternFill
+from openpyxl.utils.units import cm_to_EMU
 from openpyxl.worksheet.dimensions import ColumnDimension
-from openpyxl.styles               import Font
-from datetime                      import datetime, timedelta
+from openpyxl.styles import Font
+from datetime import datetime, timedelta
 
 ##################################################################################
 # User parameters
 ##################################################################################
 
-NUM_OF_POSITIONS    = 5
-DAYS_TO_PLAN        = 1
+NUM_OF_POSITIONS = 5
+DAYS_TO_PLAN = 1
 SHUFFLE_COEFFICIENT = 4
-SEED                = 1
-TTR_NIGHT           = 9
-TTR_DAY             = 4
-PERSONAL_SCHEDULE   = 0
-PRINT_STATISTICS    = 0
-GRAPH               = 0
-DO_WRITE            = 0
-INPUT_FILE_NAME     = ""
+SEED = 1
+TTR_NIGHT = 9
+TTR_DAY = 4
+PERSONAL_SCHEDULE = 0
+PRINT_STATISTICS = 0
+GRAPH = 0
+DO_WRITE = 0
+INPUT_FILE_NAME = ""
 
 ##################################################################################
 # Constants
 ##################################################################################
 
-HOURS_IN_DAY     = 24
-COLUMN_WIDTH     = 27
-LINE_WIDTH       = 10 + NUM_OF_POSITIONS*COLUMN_WIDTH
+HOURS_IN_DAY = 24
+COLUMN_WIDTH = 27
+LINE_WIDTH = 10 + NUM_OF_POSITIONS * COLUMN_WIDTH
 
 # FIXME: either remove or add explanation.
 # Currently fails when using unique list, needs debug
-night_hours_rd   = [1, 2, 3, 4]
-night_hours_wr   = [23, 0, 1, 2, 3, 4]
+night_hours_rd = [1, 2, 3, 4]
+night_hours_wr = [23, 0, 1, 2, 3, 4]
 
 ##################################################################################
 # Enums
 ##################################################################################
 
 # Actions
-NONE = 0; SWAP = 1; RESIZE = 2
+NONE = 0;
+SWAP = 1;
+RESIZE = 2
 # Colors
-PINK = 0; BLUE = 1; GREEN  = 2; YELLOW = 3; PURPLE = 4
+PINK = 0;
+BLUE = 1;
+GREEN = 2;
+YELLOW = 3;
+PURPLE = 4
+
 
 ##################################################################################
 # Class Cfg holds all user configurations
@@ -107,6 +113,7 @@ class Cfg:
         # Initialize the members
         self.people_names = []
         self.time_off = {}
+        self.time_on = {}
         self.position = []
 
     def position_names(self):
@@ -114,6 +121,7 @@ class Cfg:
         for p in range(NUM_OF_POSITIONS):
             position_names.append(self.position[p].name)
         return position_names
+
 
 ##################################################################################
 # Position configuration:
@@ -124,24 +132,31 @@ class Cfg:
 class PositionCfg:
     def __init__(self):
         # Initialize the members
-        self.name      = ""
+        self.name = ""
         self.team_size = []
-        self.action    = []
+        self.action = []
 
     def print(self):
         print(f"Position name: {self.name}, actions: {self.action}, team_size: {self.team_size}")
+
 
 ##################################################################################
 # Utils
 ##################################################################################
 
 def print_delimiter(): print("#" * LINE_WIDTH)
-def error(message):    print('Error: '+message); exit(1)
-def warning(message):  print('Warning: '+message);
+
+
+def error(message):    print('Error: ' + message); exit(1)
+
+
+def warning(message):  print('Warning: ' + message);
+
 
 def print_delimiter_and_str(str):
     print_delimiter()
     print (str)
+
 
 ##################################################################################
 # Functions
@@ -151,36 +166,38 @@ def parse_command_line_arguments():
     parser = argparse.ArgumentParser(description="Command-line parser")
 
     # Define the command-line arguments - mandatory
-    parser.add_argument("file_name",   type=str,                help="XLS file name ")
-    parser.add_argument("--prev",      type=str, required=True, metavar='SHEET_NAME', help="Prev schedule sheet name. Must be a valid date (yyyy-mm-dd)")
-    parser.add_argument("--positions", type=int, required=True, metavar='N',          help="Number of positions")
+    parser.add_argument("file_name", type=str, help="XLS file name ")
+    parser.add_argument("--prev", type=str, required=True, metavar='SHEET_NAME',
+                        help="Prev schedule sheet name. Must be a valid date (yyyy-mm-dd)")
+    parser.add_argument("--positions", type=int, required=True, metavar='N', help="Number of positions")
 
     # Define the command-line arguments - optional
-    parser.add_argument("--days",      type=int,              help="Number of days to schedule")
-    parser.add_argument("--ttrn",      type=int,              help="Minimum time to rest after NIGHT shift")
-    parser.add_argument("--ttrd",      type=int,              help="Minimum time to rest after DAY shift")
-    parser.add_argument("--write",     action="store_true",   help="Do write result to the XLS file")
-    parser.add_argument("--graph",     action="store_true",   help="Displaying graph of hours served")
-    parser.add_argument("--personal",  action="store_true",   help="Print personal schedule")
-    parser.add_argument("--statistics",action="store_true",   help="Print statistics for this run")
-    parser.add_argument("--seed",      type=int,              help="Seed")
-    parser.add_argument("--shuffle",   type=int, metavar='N', help=f"Shuffle coefficient. Default is 4. Higher value gives more randomization, may reduce fairness for short runs")
+    parser.add_argument("--days", type=int, help="Number of days to schedule")
+    parser.add_argument("--ttrn", type=int, help="Minimum time to rest after NIGHT shift")
+    parser.add_argument("--ttrd", type=int, help="Minimum time to rest after DAY shift")
+    parser.add_argument("--write", action="store_true", help="Do write result to the XLS file")
+    parser.add_argument("--graph", action="store_true", help="Displaying graph of hours served")
+    parser.add_argument("--personal", action="store_true", help="Print personal schedule")
+    parser.add_argument("--statistics", action="store_true", help="Print statistics for this run")
+    parser.add_argument("--seed", type=int, help="Seed")
+    parser.add_argument("--shuffle", type=int, metavar='N',
+                        help=f"Shuffle coefficient. Default is 4. Higher value gives more randomization, may reduce fairness for short runs")
 
     # Parse the command-line arguments
     args = parser.parse_args()
 
     # Configure global variables
-    if args.file_name:  global INPUT_FILE_NAME;     INPUT_FILE_NAME     = args.file_name
-    if args.days:       global DAYS_TO_PLAN;        DAYS_TO_PLAN        = args.days
-    if args.positions:  global NUM_OF_POSITIONS;    NUM_OF_POSITIONS    = args.positions
-    if args.seed:       global SEED;                SEED                = args.seed; random.seed(SEED)
-    if args.ttrn:       global TTR_NIGHT;           TTR_NIGHT           = args.ttrn
-    if args.ttrd:       global TTR_DAY;             TTR_DAY             = args.ttrd
-    if args.graph:      global GRAPH;               GRAPH               = args.graph;
-    if args.write:      global DO_WRITE;            DO_WRITE            = args.write;
-    if args.personal:   global PERSONAL_SCHEDULE;   PERSONAL_SCHEDULE   = args.personal;
+    if args.file_name:  global INPUT_FILE_NAME;     INPUT_FILE_NAME = args.file_name
+    if args.days:       global DAYS_TO_PLAN;        DAYS_TO_PLAN = args.days
+    if args.positions:  global NUM_OF_POSITIONS;    NUM_OF_POSITIONS = args.positions
+    if args.seed:       global SEED;                SEED = args.seed; random.seed(SEED)
+    if args.ttrn:       global TTR_NIGHT;           TTR_NIGHT = args.ttrn
+    if args.ttrd:       global TTR_DAY;             TTR_DAY = args.ttrd
+    if args.graph:      global GRAPH;               GRAPH = args.graph;
+    if args.write:      global DO_WRITE;            DO_WRITE = args.write;
+    if args.personal:   global PERSONAL_SCHEDULE;   PERSONAL_SCHEDULE = args.personal;
     if args.shuffle:    global SHUFFLE_COEFFICIENT; SHUFFLE_COEFFICIENT = args.shuffle;
-    if args.statistics: global PRINT_STATISTICS;    PRINT_STATISTICS    = args.statistics;
+    if args.statistics: global PRINT_STATISTICS;    PRINT_STATISTICS = args.statistics;
 
     # Sanity checks
     if not os.path.exists(args.file_name):                    error(f"File {args.file_name} does not exist.")
@@ -188,6 +205,7 @@ def parse_command_line_arguments():
     check_prev_name(args.prev)
 
     return args.prev
+
 
 ##################################################################################
 # Build DB from "List of people"
@@ -204,6 +222,7 @@ def init_ttr_db():
 
     return db
 
+
 ##################################################################################
 # Extract column from sheet
 def extract_column_from_sheet(sheet_name, column_name):
@@ -217,13 +236,14 @@ def extract_column_from_sheet(sheet_name, column_name):
     else:
         error(f"Column '{column_name}' not found in '{sheet_name}'.")
 
+
 # Turning type [13/2 15:00-16:00] to hours in schedule
 def parse_hours(single_person_time_off, prev_date_str):
     current_date = get_one_day_ahead(prev_date_str)
     hour_values = []
     current_day, current_month = map(int, current_date.split('/'))
     # Checking the single_person_time_off is not NaN because it breaks the system and says its empty. with (NaN != NaN)
-    #if single_person_time_off == single_person_time_off:
+    # if single_person_time_off == single_person_time_off:
     if single_person_time_off == single_person_time_off:
         # If its a single date, it changes the type of the variable to date so it is way easier to just add a dot.
         if '.' in single_person_time_off:
@@ -249,7 +269,7 @@ def parse_hours(single_person_time_off, prev_date_str):
                             hour_values.append(i)
                     else:
                         for i in range(HOURS_IN_DAY):
-                            hour_values.append(HOURS_IN_DAY*(day-current_day) + i)
+                            hour_values.append(HOURS_IN_DAY * (day - current_day) + i)
                 else:
                     date, time_range = date_time_range.split()
                     # Splitting to day and month (I did not add an year, i hope the war will end by then...)
@@ -263,42 +283,48 @@ def parse_hours(single_person_time_off, prev_date_str):
                     # Adding the hours to the hours value
                     # Supporting just getting 11/5
                     if day == current_day:
-                        for i in range(end_hour-start_hour):
-                            hour_values.append(start_hour+i)
+                        for i in range(end_hour - start_hour):
+                            hour_values.append(start_hour + i)
                     else:
-                        for i in range(end_hour-start_hour):
-                            hour_values.append(HOURS_IN_DAY * (day-current_day) + start_hour + i)
+                        for i in range(end_hour - start_hour):
+                            hour_values.append(HOURS_IN_DAY * (day - current_day) + start_hour + i)
         return hour_values
 
     # Just so there will be a return of an empty list
     return hour_values
 
+
+##################################################################################
 # Taking the "Time off" information from the xlsx file and turning it into a dict for later use
-def extract_time_off_db(prev_date_str):
+def extract_personal_constraints(prev_date_str, column_name):
     # Init all the relevant data from the file
-    index_of_time_off = 0
     list_of_names = extract_column_from_sheet("List of people", "People")
     try:
-        list_of_times = extract_column_from_sheet("List of people", "Time off")
+        list_of_constraints = extract_column_from_sheet("List of people", column_name)
     except:
-        error("Please add column 'Time off' next to the People column, at 'List of people' sheet")
+        error(f"Please add column '{column_name}' next to the People column, at 'List of people' sheet")
 
-    cfg_time_off = {}
+    # Store the information in a dictionary {name} --> {time_off_str}
+    personal_str = {}
     for i in range(len(list_of_names)):
         name = list_of_names[i][::-1]
-        if str(list_of_times[i]) == 'nan':
-            cfg_time_off[name] = ""
+        if str(list_of_constraints[i]) == 'nan':
+            personal_str[name] = ""
         else:
-            cfg_time_off[name] = list_of_times[i]
+            personal_str[name] = list_of_constraints[i]
 
-    for name in cfg_time_off:
-        if cfg_time_off[name] == "":
-            cfg_time_off[name] = []
+    # For each name, translate time_off_str into list of hours
+    # Build dictionary {name} --> [list of hours when the person in not available]
+    personal_list_of_hours = {}
+    for name in personal_str:
+        if personal_str[name] == "":
+            personal_list_of_hours[name] = []
         else:
             # Adding the the name the value that is a list with the hours they cant serve
-            cfg_time_off[name] = parse_hours(cfg_time_off[name], prev_date_str)
+            personal_list_of_hours[name] = parse_hours(personal_str[name], prev_date_str)
 
-    return cfg_time_off
+    return personal_list_of_hours
+
 
 # Getting a date like "23-1-25" and turning it into "26/1", for the parse_hours function
 def get_one_day_ahead(prev_date):
@@ -311,6 +337,7 @@ def get_one_day_ahead(prev_date):
     next_date_reformat = f"{day:02d}/{month:02d}"
     return next_date_reformat
 
+
 ##################################################################################
 # Get configurations of all positions
 def get_positions_cfg():
@@ -318,11 +345,12 @@ def get_positions_cfg():
     positions_cfg_list = []
 
     for position in range(NUM_OF_POSITIONS):
-        sheet_name = "Position "+str(position+1)
+        sheet_name = "Position " + str(position + 1)
         single_position_cfg = get_single_position_cfg(sheet_name)
         positions_cfg_list.append(single_position_cfg)
 
     return positions_cfg_list
+
 
 ##################################################################################
 # Get configuration of a single position
@@ -336,16 +364,17 @@ def get_single_position_cfg(sheet_name):
     # Get actions per hour
     action_list = extract_column_from_sheet(sheet_name, "Action")
     if len(action_list) != HOURS_IN_DAY:
-        error("In sheet "+sheet_name+", swap list unexpected length: " + len(action_list));
+        error("In sheet " + sheet_name + ", swap list unexpected length: " + len(action_list));
     cfg.action = action_list
 
     # Get team size per hour
     team_size_list = extract_column_from_sheet(sheet_name, "Team size")
     if len(team_size_list) != HOURS_IN_DAY:
-        error("In sheet "+sheet_name+", team size list unexpected length: " + len(team_size_list));
+        error("In sheet " + sheet_name + ", team size list unexpected length: " + len(team_size_list));
     cfg.team_size = team_size_list
 
     return cfg
+
 
 ##################################################################################
 # Get the previous schedule
@@ -373,10 +402,10 @@ def get_prev_schedule(sheet_name, cfg_position_names):
 
     return prev_schedule
 
+
 ##################################################################################
 # Check for swap - get string, return bool
 def get_action_enum(action_str):
-
     # Check if need to swap
     if action_str == 'swap':
         return SWAP
@@ -387,9 +416,10 @@ def get_action_enum(action_str):
     else:
         error('Unrecognized text ' + action_str)
 
+
 ##################################################################################
 # Choose team
-def choose_team(hour, night_list, ttr_db, team_size, cfg_time_off, day_from_beginning):
+def choose_team(hour, night_list, ttr_db, team_size, cfg, day_from_beginning):
     team = []
 
     if hour in night_hours_wr:
@@ -397,36 +427,34 @@ def choose_team(hour, night_list, ttr_db, team_size, cfg_time_off, day_from_begi
     else:
         is_night = 0
 
-    # The real hour is because the cfg_time_off
-    # dict does not have a day counter its just keeps going so if its a day ahead it will be [24,25,26...]
-    # So in order to know we need to find the real_hour
-    real_hour = day_from_beginning*24+hour
+    # Calculate absolute hour to use in personal constraints
+    real_hour = day_from_beginning * 24 + hour
     for i in range(team_size):
         # Build local db - exclude previous night watchers
         local_ttr_db = {}
         for item in ttr_db.items():
             name = item[0]
-            ttr  = item[1]
+            ttr = item[1]
             # If is night, do not add previous night watchers to local_db
             if not (is_night and name in night_list):
                 local_ttr_db[name] = ttr
 
+        # Try lowest TTR
         name = get_lowest_ttr(local_ttr_db)
 
-        # Checks if the hour is overlapping with a known "time off" hour of this person
-        if real_hour in cfg_time_off[name]:
-            # Using for (instead of while)to avoid endless loop
-            # Possibly no choice but to take from night watchers
-            # Checks if its night and that the personnel is active
-            # The else checks just if the personnel is active(in the day hours)
-            for k in range(len(local_ttr_db)):
-                if real_hour not in cfg_time_off[name]:
-                    break
+        # Checks personal constraints, using for (instead of while) to avoid endless loop
+        for k in range(len(local_ttr_db)):
+            if is_available(name, real_hour, cfg):
+                break
+            else:
+                # Retry
                 name = get_lowest_ttr(local_ttr_db)
 
-        # Check fairness
-        if ttr_db[name] > 0:                error(f"Chosen {name} with TTR {ttr_db[name]}\n")
-        if real_hour in cfg_time_off[name]: error(f"Chosen {name} which is on vacation (try --shuffle {SHUFFLE_COEFFICIENT+1})\n")
+        # Check for violations
+        if ttr_db[name] > 0:
+            error(f"Chosen {name} with TTR {ttr_db[name]}\n")
+        if not is_available(name, real_hour, cfg):
+            error(f"Chosen {name} which is on vacation (try --shuffle {SHUFFLE_COEFFICIENT+1})\n")
 
         # Added if because of a change in the code, we only need to run this "if" if its night time so added a check
         if is_night == 1:
@@ -439,11 +467,27 @@ def choose_team(hour, night_list, ttr_db, team_size, cfg_time_off, day_from_begi
     return team
 
 ##################################################################################
+# Check if the person is available at the specified hour
+def is_available(name, real_hour, cfg):
+    # Check time off
+    if real_hour in cfg.time_off[name]:
+        return 0
+
+    # Check time on
+    if cfg.time_on[name]:
+        if real_hour not in cfg.time_on[name]:
+            return 0
+
+    # Default
+    return 1
+
+
+
+##################################################################################
 # Resize team
 # Do not replace all team members, but, based on the previous team,
 # release or add N members
-def resize_team(hour, night_list, ttr_db, old_team, new_team_size, cfg_time_off, day_from_beginning):
-
+def resize_team(hour, night_list, ttr_db, old_team, new_team_size, cfg, day_from_beginning):
     if new_team_size == 0:
         return [""]
 
@@ -457,14 +501,15 @@ def resize_team(hour, night_list, ttr_db, old_team, new_team_size, cfg_time_off,
     # Resize
     if new_team_size < old_team_size:
         # Reduce team size
-        for i in range(old_team_size-new_team_size):
-            random_index = random.randint(0, len(new_team)-1)
+        for i in range(old_team_size - new_team_size):
+            random_index = random.randint(0, len(new_team) - 1)
             released = new_team.pop(random_index)
     else:
         # Increase team size
-        new_team += choose_team(hour, night_list, ttr_db, new_team_size - old_team_size, cfg_time_off, day_from_beginning)
+        new_team += choose_team(hour, night_list, ttr_db, new_team_size - old_team_size, cfg, day_from_beginning)
 
     return new_team
+
 
 ##################################################################################
 # Build schedule for a single day, based on the previous day
@@ -484,15 +529,15 @@ def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, cfg, day_fro
         for position in range(NUM_OF_POSITIONS):
             # Assign team (should be a function)
             team_size = cfg.position[position].team_size[hour]
-            action    = get_action_enum(str(cfg.position[position].action[hour]))
-            team      = prev_team[position]
+            action = get_action_enum(str(cfg.position[position].action[hour]))
+            team = prev_team[position]
 
             if action == SWAP:
-                team = choose_team(hour, night_list, ttr_db, team_size, cfg.time_off, day_from_beginning)
+                team = choose_team(hour, night_list, ttr_db, team_size, cfg, day_from_beginning)
             elif action == RESIZE:
-                team = resize_team(hour, night_list, ttr_db, team, team_size, cfg.time_off, day_from_beginning)
+                team = resize_team(hour, night_list, ttr_db, team, team_size, cfg, day_from_beginning)
             elif hour == 0:
-                team = prev_schedule[HOURS_IN_DAY-1][position]
+                team = prev_schedule[HOURS_IN_DAY - 1][position]
                 # Note: these people should be recorded as night watchers
                 # They are not on the list, because they started the shift at "day hours" (23:00)
                 for name in team:
@@ -515,6 +560,7 @@ def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, cfg, day_fro
 
     return schedule
 
+
 ##################################################################################
 # Print schedule to screen and (optionally) to file
 def output_schedule(schedule, date_str, cfg_position_names):
@@ -525,6 +571,7 @@ def output_schedule(schedule, date_str, cfg_position_names):
 
     # Write to XLS file
     if DO_WRITE: write_schedule_to_xls(schedule, date_str, cfg_position_names)
+
 
 ##################################################################################
 # DB utils
@@ -540,13 +587,17 @@ def set_ttr(hour, name, db):
         return
 
     # Normal case
-    if hour in night_hours_rd: db[name] = TTR_NIGHT+1
-    else:                      db[name] = TTR_DAY+1
+    if hour in night_hours_rd:
+        db[name] = TTR_NIGHT + 1
+    else:
+        db[name] = TTR_DAY + 1
+
 
 # For each person, decrement the remaining "time to rest"
 def decrement_ttr(db):
     for name in db:
         db[name] -= 1
+
 
 # Get available people from DB (with TTR == 0)
 def get_available(db):
@@ -556,17 +607,18 @@ def get_available(db):
             available.append(name)
     return available
 
+
 # Print DB
 def print_db(header, db):
     print(header)
     for name in db:
         print(f"{name.ljust(COLUMN_WIDTH)}{db[name]}")
 
+
 ##################################################################################
 # Getting the lowest items and keys of the values for an "n" amount of numbers above the lowest ttr
 # Returns the names with ttr in [TTR, TTR+1, TTR+2, ... TTR+n-1]
 def get_list_of_lowest_ttrs(ttr_db):
-
     # Get list of all available TTRs
     list_of_unique_available_ttrs = []
     for item in ttr_db.items():
@@ -583,11 +635,12 @@ def get_list_of_lowest_ttrs(ttr_db):
     names_with_lowest_ttrs = []
     for item in ttr_db.items():
         name = item[0]
-        ttr  = item[1]
+        ttr = item[1]
         if ttr < 0 and ttr in list_of_n_lowest_ttrs:
             names_with_lowest_ttrs.append(name)
 
     return names_with_lowest_ttrs
+
 
 ##################################################################################
 # Get the name with lowest TTR value
@@ -601,8 +654,9 @@ def get_lowest_ttr(ttr_db):
     shuffled_list_of_names = random.sample(all_names_with_lowest_ttr, len(all_names_with_lowest_ttr))
 
     name = shuffled_list_of_names[0]
-    #print(f"Sorted all_names_with_lowest_ttr: {all_names_with_lowest_ttr}, chosen: {name}, offset: {offset}")
+    # print(f"Sorted all_names_with_lowest_ttr: {all_names_with_lowest_ttr}, chosen: {name}, offset: {offset}")
     return name
+
 
 ##################################################################################
 # Update TTR DB with previous schedule
@@ -633,24 +687,26 @@ def update_db_with_prev_schedule(valid_names, db, schedule):
 
     return db, night_list
 
+
 ##################################################################################
 # Print schedule
 def print_schedule(schedule, schedule_name, cfg_position_names):
     print_delimiter_and_str(schedule_name)
     header = "Hour\t"
     for p in range(NUM_OF_POSITIONS):
-        header += (cfg_position_names[p]).ljust(COLUMN_WIDTH)+"\t"
+        header += (cfg_position_names[p]).ljust(COLUMN_WIDTH) + "\t"
     print_delimiter_and_str(header)
     print_delimiter()
 
     for hour in range(HOURS_IN_DAY):
         if hour >= len(schedule):
-            error("No schedule for hour "+"{:02d}:00".format(hour))
+            error("No schedule for hour " + "{:02d}:00".format(hour))
         line_str = "{:02d}:00\t".format(hour)
         for team in schedule[hour]:
             line_str += ",".join(team).ljust(COLUMN_WIDTH)
             line_str += "\t"
         print(line_str)
+
 
 ##################################################################################
 # Write schedule to XLS file
@@ -689,6 +745,7 @@ def write_schedule_to_xls(schedule, sheet_name, cfg_position_names):
     # Save the workbook to a file
     workbook.save(INPUT_FILE_NAME)
 
+
 ##################################################################################
 # Color the worksheet
 def color_worksheet(worksheet):
@@ -701,12 +758,13 @@ def color_worksheet(worksheet):
     for cell in worksheet[1]:
         cell.font = Font(bold=True)
 
+
 ##################################################################################
 # Add color to column
 def color_column(worksheet, index, color):
     # Create a PatternFill object with the required color
-    if color   == PINK:
-        fill       = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
+    if color == PINK:
+        fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
     elif color == BLUE:
         fill = PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid")
     elif color == GREEN:
@@ -729,10 +787,10 @@ def color_column(worksheet, index, color):
             if col_num == index:  # Check if it's the first column
                 cell.fill = fill
 
+
 ##################################################################################
 # Check fairness
 def check_fairness(db, schedule):
-
     # Init hours_served, night_hours_served, score_value(score = (hours_served-night_hours_served) + (night_hours_served)*1.5
     score_value = {}
     night_hours_served = {}
@@ -762,19 +820,21 @@ def check_fairness(db, schedule):
 
     print_delimiter()
     for name in hours_served:
-        print(f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(hours_served[name]).ljust(4)}\t{('*' * hours_served[name]).ljust(most_hours_served+5)}"
-              f" Night hours served: {str(night_hours_served[name]).ljust(4)}" + ('*'*night_hours_served[name]))
+        print(
+                    f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(hours_served[name]).ljust(4)}\t{('*' * hours_served[name]).ljust(most_hours_served+5)}"
+                    f" Night hours served: {str(night_hours_served[name]).ljust(4)}" + ('*' * night_hours_served[name]))
 
     # Calculate average, night average
     total = sum(value for value in hours_served.values())
     average = int(total / len(hours_served))
     night_hours_total = sum(value2 for value2 in night_hours_served.values())
-    night_hours_average = int(night_hours_total/len(night_hours_served))
+    night_hours_average = int(night_hours_total / len(night_hours_served))
     # Print average
 
     print_delimiter()
-    print(f"Average: {str(average).ljust(COLUMN_WIDTH-3)} served: {str(average).ljust(4)}\t" + ("*" * average).ljust(most_hours_served+5) + f" Night hours served:"
-             f" {str(night_hours_average).ljust(4)}" + "*" * night_hours_average)
+    print(f"Average: {str(average).ljust(COLUMN_WIDTH-3)} served: {str(average).ljust(4)}\t" + ("*" * average).ljust(
+        most_hours_served + 5) + f" Night hours served:"
+                                 f" {str(night_hours_average).ljust(4)}" + "*" * night_hours_average)
     print_delimiter()
     # Adding standard_deviation
     standard_deviation_value = standard_deviation(hours_served, average, True)
@@ -786,6 +846,7 @@ def check_fairness(db, schedule):
 
     return 1
 
+
 ##################################################################################
 def standard_deviation(hours_served, average, do_print):
     # In order to calculate the standard deviation you need to calculate the sum of the
@@ -795,11 +856,13 @@ def standard_deviation(hours_served, average, do_print):
     number_of_people = len(hours_served)
     for name in hours_served:
         sum_of_delta_hours += math.pow(average - hours_served[name], 2)
-    standard_deviation_value = math.sqrt(sum_of_delta_hours/number_of_people)
+    standard_deviation_value = math.sqrt(sum_of_delta_hours / number_of_people)
     # If you want to print set do_print to True
-    if(do_print):
-        print(f"Standard Deviation:" + " " + str(round(standard_deviation_value, 4)).ljust(28) + ("*" * (round(standard_deviation_value))))
+    if (do_print):
+        print(f"Standard Deviation:" + " " + str(round(standard_deviation_value, 4)).ljust(28) + (
+                    "*" * (round(standard_deviation_value))))
     return round(standard_deviation_value, 4)
+
 
 ##################################################################################
 # Making graph for night_hours
@@ -820,7 +883,7 @@ def make_graph(night_hours_served, hours_served, average, night_hours_average, s
         y_value = hours_served[name]
         y_values = np.append(y_values, y_value)
         x_values = np.append(x_values, x_value)
-        if(average + standard_deviation_value < y_value or y_value < average - standard_deviation_value):
+        if (average + standard_deviation_value < y_value or y_value < average - standard_deviation_value):
             y_values_above_average = np.append(y_values_above_average, y_value)
             x_values_above_average = np.append(x_values_above_average, x_value)
         x_value += 1
@@ -828,12 +891,14 @@ def make_graph(night_hours_served, hours_served, average, night_hours_average, s
     # Making lines and plotting points
     y_value_average = np.array([average, average])
     x_value_average = np.array([0, x_value])
-    y_value_standard_deviation = np.array([average+standard_deviation_value, average+standard_deviation_value])
+    y_value_standard_deviation = np.array([average + standard_deviation_value, average + standard_deviation_value])
     x_value_standard_deviation = np.array([0, x_value])
-    negative_y_value_standard_deviation = np.array([average-standard_deviation_value, average-standard_deviation_value])
+    negative_y_value_standard_deviation = np.array(
+        [average - standard_deviation_value, average - standard_deviation_value])
     negative_x_value_standard_deviation = np.array([0, x_value])
     plt.plot(x_value_standard_deviation, y_value_standard_deviation, color='green', linestyle='--', linewidth=1.5)
-    plt.plot(negative_x_value_standard_deviation, negative_y_value_standard_deviation, color='green', linestyle='--', linewidth=1.5)
+    plt.plot(negative_x_value_standard_deviation, negative_y_value_standard_deviation, color='green', linestyle='--',
+             linewidth=1.5)
     plt.plot(x_value_average, y_value_average, color='red')
     plt.scatter(x_values, y_values)
     plt.scatter(x_values_above_average, y_values_above_average, color='red')
@@ -841,10 +906,11 @@ def make_graph(night_hours_served, hours_served, average, night_hours_average, s
     plt.xlabel('Serial Number')
     plt.ylabel('Hours Served')
     plt.show()
+
+
 ##################################################################################
 # Verify result
 def verify(cfg_people_names, schedule):
-
     # Init last_served
     last_served = {}
     for name in cfg_people_names:
@@ -853,7 +919,7 @@ def verify(cfg_people_names, schedule):
     # Check schedule
     for hour in range(len(schedule)):
         line = schedule[hour]
-        #print(f"Verify ({hour}): {line}")
+        # print(f"Verify ({hour}): {line}")
         for team in line:
             for name in team:
                 # Ignore people that were removed from the list
@@ -863,13 +929,14 @@ def verify(cfg_people_names, schedule):
                         diff = hour - last_served_hour - 1
                         expected_ttr = TTR_NIGHT if last_served_hour in night_hours_rd else TTR_DAY
                         if diff < expected_ttr and diff > 0:
-                            error(f"Poor {name} did not get his {expected_ttr} hour rest (served at {last_served_hour}, then at {hour})")
+                            error(
+                                f"Poor {name} did not get his {expected_ttr} hour rest (served at {last_served_hour}, then at {hour})")
                     last_served[name] = hour
+
 
 ##################################################################################
 # Check who wasn't assigned
 def check_for_idle(db, schedule):
-
     # Init participated
     participated = {}
     for name in db:
@@ -889,6 +956,7 @@ def check_for_idle(db, schedule):
 
     return
 
+
 ##################################################################################
 # Get next date, based on previous date
 def get_next_date(prev_date_str):
@@ -901,6 +969,7 @@ def get_next_date(prev_date_str):
     next_date_str = next_obj.strftime(date_format)
 
     return next_date_str
+
 
 ##################################################################################
 # User request: print personal information
@@ -927,11 +996,11 @@ def print_personal_info(schedule, date):
         print(f"{name}: {personal_schedule[name]}")
 
 
-
 ##################################################################################
 # Print information that can be usefule for debug
 def print_debug_info():
     print_delimiter_and_str(f"Current seed: {SEED}")
+
 
 ##################################################################################
 # Check reappearance of teams
@@ -958,6 +1027,7 @@ def check_teams(schedule):
     # Sort by number of occurance
     sorted_teams_db = dict(sorted(teams_db.items(), key=lambda item: item[1]))
     print_delimiter_and_str(f"Teams: {sorted_teams_db}")
+
 
 ##################################################################################
 # Check distribution of people between positions
@@ -986,34 +1056,34 @@ def check_positions(schedule, position_names):
                     for p in range(NUM_OF_POSITIONS):
                         positions_db[name].append(0)
                 # Update
-                positions_db[name][position]   += 1
-                
+                positions_db[name][position] += 1
+
                 # Init entries with -1 (as 0 is real position):
                 if name not in position_names_db:
                     position_names_db[name] = []
                     for p in range(NUM_OF_POSITIONS):
-                        position_names_db[name].append(-1)   
-                 
-                # Sample DB:                   
-                samp_position = position_names_db[name][position_idx]          
-                samp_hour     = position_names_db[name][hour_idx]   
-                hour_diff     = hour - samp_hour 
-                               
+                        position_names_db[name].append(-1)
+
+                        # Sample DB:
+                samp_position = position_names_db[name][position_idx]
+                samp_hour = position_names_db[name][hour_idx]
+                hour_diff = hour - samp_hour
+
                 # Compare, and avoid fail if belongs to same entry:
                 if samp_position == position and hour_diff > 2 and hour > 24:
-                    warning(f"name: {name} ,hour: {hour}:00, got again the same position: {position_names[position]}. Last hour: {samp_hour}")
+                    warning(
+                        f"name: {name} ,hour: {hour}:00, got again the same position: {position_names[position]}. Last hour: {samp_hour}")
                     warn_cnt += 1
-                
+
                 # Update DB:   
-                position_names_db[name][position_idx]   = position
-                position_names_db[name][hour_idx]   = hour               
-    
+                position_names_db[name][position_idx] = position
+                position_names_db[name][hour_idx] = hour
+
     if warn_cnt > 5:
         error(f"Got too many repetitions {warn_cnt}")
-                  
 
     # Print header (with position names)
-    header_str = "Positions summary".ljust(COLUMN_WIDTH+18)
+    header_str = "Positions summary".ljust(COLUMN_WIDTH + 18)
     for p in range(NUM_OF_POSITIONS):
         header_str += str(position_names[p]).ljust(15)
     print_delimiter_and_str(header_str)
@@ -1031,7 +1101,7 @@ def check_positions(schedule, position_names):
     position_average_list = get_position_average_list(positions_db)
     for p in range(NUM_OF_POSITIONS):
         average_str += str(position_average_list[p]).ljust(15)
-    print_delimiter_and_str("Average:".ljust(COLUMN_WIDTH+18)+average_str)
+    print_delimiter_and_str("Average:".ljust(COLUMN_WIDTH + 18) + average_str)
 
     # Print standard deviation
     hours_in_position = []
@@ -1048,6 +1118,7 @@ def check_positions(schedule, position_names):
         hours_in_position = []
 
     print_delimiter_and_str("Standard Deviation:".ljust(COLUMN_WIDTH + 18) + standard_deviation_value_str)
+
 
 ##################################################################################
 # Calculate average per position
@@ -1068,9 +1139,10 @@ def get_position_average_list(db):
     # Calculate average per position
     position_average_list = []
     for position in range(NUM_OF_POSITIONS):
-        position_average_list.append(int(position_total_hours[position]/num_of_people))
+        position_average_list.append(int(position_total_hours[position] / num_of_people))
 
     return position_average_list
+
 
 ##################################################################################
 # Check prev_name format
@@ -1080,9 +1152,11 @@ def check_prev_name(prev_name):
     try:
         # Attempt to parse the date string with the specified format
         datetime_obj = datetime.strptime(prev_name, date_format)
-        #print(f"'{prev_name}' is a valid date in the format '{date_format}'.")
+        # print(f"'{prev_name}' is a valid date in the format '{date_format}'.")
     except ValueError:
-        error(f"Previous sheet name must be a valid date in the format '{date_format}'. I know that the example is misleading and I apologize for that :) Will fix")
+        error(
+            f"Previous sheet name must be a valid date in the format '{date_format}'. I know that the example is misleading and I apologize for that :) Will fix")
+
 
 ##################################################################################
 # Extract all necessary information from input file
@@ -1093,8 +1167,10 @@ def parse_input_file(prev_date_str):
     # Init TTR DB {name} -> {time to rest}
     ttr_db = init_ttr_db()
 
-    # Get "Time off" information
-    cfg.time_off = extract_time_off_db(prev_date_str)
+    # Get "Time off/on" information
+    cfg.time_off = extract_personal_constraints(prev_date_str, "Time off")
+    cfg.time_on  = extract_personal_constraints(prev_date_str, "Time on")
+    print(f"Time on: {cfg.time_on}")
 
     # Get valid names from the original "List of people"
     cfg.people_names = ttr_db.keys()
@@ -1123,10 +1199,9 @@ def main():
 
     # Build schedule for N days
     for day in range(DAYS_TO_PLAN):
-
         # Build next day schedule
         curr_date_str = get_next_date(prev_date_str)
-        new_schedule  = build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, cfg, day)
+        new_schedule = build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, cfg, day)
 
         # Append new_schedule to total
         total_new_schedule = total_new_schedule + new_schedule
@@ -1140,10 +1215,9 @@ def main():
     if (PRINT_STATISTICS):
         check_teams(total_new_schedule)
         check_positions(total_new_schedule, cfg.position_names())
-        
-        
-        
+
     check_fairness(ttr_db, total_new_schedule)
+
 
 ##################################################################################
 if __name__ == '__main__':
