@@ -420,51 +420,76 @@ def get_action_enum(action_str):
 ##################################################################################
 # Choose team
 def choose_team(hour, night_list, ttr_db, team_size, cfg, day_from_beginning):
+    # Init
     team = []
-
-    if hour in night_hours_wr:
-        is_night = 1
-    else:
-        is_night = 0
+    is_night = 1 if hour in night_hours_wr else 0
 
     # Calculate absolute hour to use in personal constraints
     real_hour = day_from_beginning * 24 + hour
+
+    # Build team
     for i in range(team_size):
         # Build local db - exclude previous night watchers
-        local_ttr_db = {}
-        for item in ttr_db.items():
-            name = item[0]
-            ttr = item[1]
-            # If is night, do not add previous night watchers to local_db
-            if not (is_night and name in night_list):
-                local_ttr_db[name] = ttr
+        local_ttr_db = copy_exclude_ttr_db(ttr_db, is_night, night_list)
 
-        # Try lowest TTR
-        name = get_lowest_ttr(local_ttr_db)
-
-        # Checks personal constraints, using for (instead of while) to avoid endless loop
-        for k in range(len(local_ttr_db)):
-            if is_available(name, real_hour, cfg):
-                break
-            else:
-                # Retry
-                name = get_lowest_ttr(local_ttr_db)
+        # Choose team member
+        name = choose_team_member(local_ttr_db, real_hour, cfg)
 
         # Check for violations
-        if ttr_db[name] > 0:
-            error(f"Chosen {name} with TTR {ttr_db[name]}\n")
-        if not is_available(name, real_hour, cfg):
-            error(f"Chosen {name} which is on vacation (try --shuffle {SHUFFLE_COEFFICIENT+1})\n")
+        verify_team_member(name, ttr_db, is_night, real_hour, night_list, cfg)
 
-        # Added if because of a change in the code, we only need to run this "if" if its night time so added a check
-        if is_night == 1:
-            if name in night_list:
-                error(f"At {hour}:00, the chosen one has already served last night")
-
+        # Update TTR
         set_ttr(hour, name, ttr_db)
         team.append(name)
 
     return team
+
+
+##################################################################################
+# Choose a single person
+def choose_team_member(ttr_db, real_hour, cfg):
+
+    # Try lowest TTR
+    name = get_lowest_ttr(ttr_db)
+
+    # Checks personal constraints, using for (instead of while) to avoid endless loop
+    for k in range(len(ttr_db)):
+        if is_available(name, real_hour, cfg):
+            break
+        else:
+            # Retry
+            name = get_lowest_ttr(ttr_db)
+
+    return name
+
+##################################################################################
+# Check chosen team member for violations
+def verify_team_member(name, ttr_db, is_night, absolute_hour, night_list, cfg):
+    relative_hour  = absolute_hour % HOURS_IN_DAY
+    message_header = f"At {relative_hour}:00, the chosen team member ({name}) "
+
+    if ttr_db[name] > 0:
+        error(message_header+f"has a positive TTR {ttr_db[name]}\n")
+    if not is_available(name, absolute_hour, cfg):
+        error(message_header+f"should be on vacation (try --shuffle {SHUFFLE_COEFFICIENT+1})\n")
+    if is_night and name in night_list:
+        error(message_header+f"has already served last night")
+
+    return
+
+##################################################################################
+# Copy ttr_db, but exclude people on the list
+# Currently used to exclude previous night watchers from the DB
+def copy_exclude_ttr_db(ttr_db, exclude_condition, exclude_list):
+    local_ttr_db = {}
+    for item in ttr_db.items():
+        name = item[0]
+        ttr = item[1]
+        # If is night, do not add previous night watchers to local_db
+        if not (exclude_condition and name in exclude_list):
+            local_ttr_db[name] = ttr
+
+    return local_ttr_db
 
 ##################################################################################
 # Check if the person is available at the specified hour
@@ -480,8 +505,6 @@ def is_available(name, real_hour, cfg):
 
     # Default
     return 1
-
-
 
 ##################################################################################
 # Resize team
