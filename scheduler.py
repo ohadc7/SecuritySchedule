@@ -66,7 +66,7 @@ from datetime import datetime, timedelta
 
 NUM_OF_POSITIONS = 5
 DAYS_TO_PLAN = 1
-SHUFFLE_COEFFICIENT = 4
+SHUFFLE_COEFFICIENT = 3
 SEED = 1
 TTR_NIGHT = 9
 TTR_DAY = 4
@@ -733,7 +733,6 @@ def update_db_with_prev_schedule(valid_names, ttr_db, prev_position_db, schedule
 
         # Update TTS (for each hour, not for each position)
         decrement_ttr(ttr_db)
-    print(f"prev_position_db: {prev_position_db}")
 
     return ttr_db, night_list
 
@@ -840,7 +839,7 @@ def color_column(worksheet, index, color):
 
 ##################################################################################
 # Check fairness
-def check_fairness(db, schedule):
+def check_fairness(db, schedule, night_hours=night_hours_rd):
     # Init hours_served, night_hours_served, score_value(score = (hours_served-night_hours_served) + (night_hours_served)*1.5
     score_value = {}
     night_hours_served = {}
@@ -857,7 +856,7 @@ def check_fairness(db, schedule):
     for hour in range(len(schedule)):
         for team in schedule[hour]:
             for name in team:
-                if hour % 24 in night_hours_rd:
+                if hour % 24 in night_hours:
                     night_hours_served[name] += 1
                 if name != 'nan' and name in hours_served:
                     hours_served[name] += 1
@@ -872,22 +871,24 @@ def check_fairness(db, schedule):
     for name in hours_served:
         print(
                     f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(hours_served[name]).ljust(4)}\t{('*' * hours_served[name]).ljust(most_hours_served+5)}"
-                    f" Night hours served: {str(night_hours_served[name]).ljust(4)}" + ('*' * night_hours_served[name]))
+                    f" Night shifts: {str(int(night_hours_served[name]/2)).ljust(4)}" + ('*' * int(night_hours_served[name]/2)))
 
     # Calculate average, night average
     total = sum(value for value in hours_served.values())
     average = int(total / len(hours_served))
     night_hours_total = sum(value2 for value2 in night_hours_served.values())
     night_hours_average = int(night_hours_total / len(night_hours_served))
+    night_shifts_average = int(night_hours_average/2)
     # Print average
 
     print_delimiter()
     print(f"Average: {str(average).ljust(COLUMN_WIDTH-3)} served: {str(average).ljust(4)}\t" + ("*" * average).ljust(
-        most_hours_served + 5) + f" Night hours served:"
-                                 f" {str(night_hours_average).ljust(4)}" + "*" * night_hours_average)
+        most_hours_served + 5) + f" Night shifts:"
+                                 f" {str(night_shifts_average).ljust(4)}" + "*" * night_shifts_average)
     print_delimiter()
     # Adding standard_deviation
-    standard_deviation_value = standard_deviation(hours_served, average, True)
+    standard_deviation_value = standard_deviation("Total", hours_served, average, True)
+    standard_deviation_value = standard_deviation("Night", night_hours_served, night_hours_average, True)
     print_delimiter()
 
     if (GRAPH):
@@ -898,23 +899,23 @@ def check_fairness(db, schedule):
 
 
 ##################################################################################
-def standard_deviation(hours_served, average, do_print):
+def standard_deviation(header_str, hours_served, average, do_print):
     # FIXME: bug in this function, needs debug
     # Looks like it's called twice, with different types of DB
-    return 0
+    #return 0
     # In order to calculate the standard deviation you need to calculate the sum of the
     # differences between all the people and the average to the power of 2 and then divide
     # that by the number of people and then square root all of that
     sum_of_delta_hours = 0
     number_of_people = len(hours_served)
-    print(f"hours_served: {hours_served}")
+
     for name in hours_served:
         #print(f"name: {name}")
         sum_of_delta_hours += math.pow(average - hours_served[name], 2)
     standard_deviation_value = math.sqrt(sum_of_delta_hours / number_of_people)
     # If you want to print set do_print to True
     if (do_print):
-        print(f"Standard Deviation:" + " " + str(round(standard_deviation_value, 4)).ljust(28) + (
+        print(f"{header_str} standard deviation:" + " " + str(round(standard_deviation_value, 4)).ljust(28) + (
                     "*" * (round(standard_deviation_value))))
     return round(standard_deviation_value, 4)
 
@@ -1084,12 +1085,12 @@ def check_teams(schedule):
     print_delimiter_and_str(f"Teams: {sorted_teams_db}")
 
 ##################################################################################
-# Init position_db {name} --> {position_index: hour}
+# Init position_db {name} --> [position_index, hour]
 def init_positions_db(list_of_names):
     prev_position_db = {}
 
     for name in list_of_names:
-        prev_position_db[name] = [0, 0]
+        prev_position_db[name] = [-1, -1]
 
     return prev_position_db
 
@@ -1175,20 +1176,21 @@ def check_positions(schedule, position_names):
     print_delimiter_and_str("Average:".ljust(COLUMN_WIDTH + 18) + average_str)
 
     # Print standard deviation
-    hours_in_position = []
-    standard_deviation_value_str = ""
-    # Getting hours_in_position
-    for position in range(NUM_OF_POSITIONS):
-        for name in time_spent_at_position:
-            hours_in_position.append(time_spent_at_position[name][position])
-
-        for k in range(len(position_average_list)):
-            standard_deviation_value = standard_deviation(hours_in_position, position_average_list[k], False)
-        standard_deviation_value_str += str(standard_deviation_value).ljust(15)
-
-        hours_in_position = []
-
-    print_delimiter_and_str("Standard Deviation:".ljust(COLUMN_WIDTH + 18) + standard_deviation_value_str)
+    # FIXME: fails, needs debug
+    # hours_in_position = []
+    # standard_deviation_value_str = ""
+    # # Getting hours_in_position
+    # for position in range(NUM_OF_POSITIONS):
+    #     for name in time_spent_at_position:
+    #         hours_in_position.append(time_spent_at_position[name][position])
+    #
+    #     for k in range(len(position_average_list)):
+    #         standard_deviation_value = standard_deviation(hours_in_position, position_average_list[k], False)
+    #     standard_deviation_value_str += str(standard_deviation_value).ljust(15)
+    #
+    #     hours_in_position = []
+    #
+    # print_delimiter_and_str("Standard Deviation:".ljust(COLUMN_WIDTH + 18) + standard_deviation_value_str)
 
 
 ##################################################################################
@@ -1289,7 +1291,7 @@ def main():
         check_teams(total_new_schedule)
         check_positions(total_new_schedule, cfg.position_names())
 
-    check_fairness(ttr_db, total_new_schedule)
+    check_fairness(ttr_db, total_new_schedule, [23, 0, 1, 2, 3, 4, 5, 6])#range(0, 7))
 
 
 ##################################################################################
