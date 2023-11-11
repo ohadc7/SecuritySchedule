@@ -419,7 +419,7 @@ def get_action_enum(action_str):
 
 ##################################################################################
 # Choose team
-def choose_team(hour, night_list, ttr_db, team_size, cfg, day_from_beginning):
+def choose_team(hour, night_list, ttr_db, prev_position_db, curr_position, team_size, cfg, day_from_beginning):
     # Init
     team = []
     is_night = 1 if hour in night_hours_wr else 0
@@ -430,7 +430,7 @@ def choose_team(hour, night_list, ttr_db, team_size, cfg, day_from_beginning):
     # Build team
     for i in range(team_size):
         # Build local db - exclude previous night watchers & people not available at this time
-        local_ttr_db = get_available_ttr_db(ttr_db, is_night, night_list, real_hour, cfg)
+        local_ttr_db = get_available_ttr_db(ttr_db, prev_position_db, curr_position, is_night, night_list, real_hour, cfg)
 
         # Choose team member
         name = choose_team_member(local_ttr_db)
@@ -475,7 +475,7 @@ def verify_team_member(name, ttr_db, is_night, absolute_hour, night_list, cfg):
 
 ##################################################################################
 # Build ttr_db, but only people available to be chosen
-def get_available_ttr_db(ttr_db, is_night, night_list, real_hour, cfg):
+def get_available_ttr_db(ttr_db, prev_position_db, curr_position, is_night, night_list, real_hour, cfg):
     # Init
     available_ttr_db = {}
 
@@ -498,6 +498,17 @@ def get_available_ttr_db(ttr_db, is_night, night_list, real_hour, cfg):
 
         # If got this far, the person is available
         available_ttr_db[name] = ttr
+
+    # Collect people that recently served in this position
+    # FIXME: may affect fairness
+    names_to_remove = []
+    for name in available_ttr_db.keys():
+        if prev_position_db[name][0] == curr_position and len(names_to_remove) < len(available_ttr_db.keys())-1:
+            names_to_remove.append(name)
+
+    # Remove these people from the DB
+    for name in names_to_remove:
+            del available_ttr_db[name]
 
     return available_ttr_db
 
@@ -522,7 +533,7 @@ def is_available(name, real_hour, cfg):
 # Resize team
 # Do not replace all team members, but, based on the previous team,
 # release or add N members
-def resize_team(hour, night_list, ttr_db, old_team, new_team_size, cfg, day_from_beginning):
+def resize_team(hour, night_list, ttr_db, prev_position_db, curr_position, old_team, new_team_size, cfg, day_from_beginning):
     if new_team_size == 0:
         return [""]
 
@@ -541,14 +552,15 @@ def resize_team(hour, night_list, ttr_db, old_team, new_team_size, cfg, day_from
             released = new_team.pop(random_index)
     else:
         # Increase team size
-        new_team += choose_team(hour, night_list, ttr_db, new_team_size - old_team_size, cfg, day_from_beginning)
+        num_of_members_to_add = new_team_size - old_team_size
+        new_team += choose_team(hour, night_list, ttr_db, prev_position_db, curr_position, num_of_members_to_add, cfg, day_from_beginning)
 
     return new_team
 
 
 ##################################################################################
 # Build schedule for a single day, based on the previous day
-def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, cfg, day_from_beginning):
+def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, prev_position_db, cfg, day_from_beginning):
     schedule = [[] for _ in range(HOURS_IN_DAY)]
     # Stores the current team at the specific position
     # If no action, the same team continues to the next hour
@@ -556,7 +568,7 @@ def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, cfg, day_fro
     prev_team = [[] for _ in range(NUM_OF_POSITIONS)]
 
     # Get TTR information from the previous schedule
-    ttr_db, night_list = update_db_with_prev_schedule(cfg.people_names, ttr_db, prev_schedule)
+    ttr_db, night_list = update_db_with_prev_schedule(cfg.people_names, ttr_db, prev_position_db, prev_schedule)
 
     # For each hour
     for hour in range(HOURS_IN_DAY):
@@ -568,9 +580,9 @@ def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, cfg, day_fro
             team = prev_team[position]
 
             if action == SWAP:
-                team = choose_team(hour, night_list, ttr_db, team_size, cfg, day_from_beginning)
+                team = choose_team(hour, night_list, ttr_db, prev_position_db, position, team_size, cfg, day_from_beginning)
             elif action == RESIZE:
-                team = resize_team(hour, night_list, ttr_db, team, team_size, cfg, day_from_beginning)
+                team = resize_team(hour, night_list, ttr_db, prev_position_db, position, team, team_size, cfg, day_from_beginning)
             elif hour == 0:
                 team = prev_schedule[HOURS_IN_DAY - 1][position]
                 # Note: these people should be recorded as night watchers
@@ -581,8 +593,10 @@ def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, cfg, day_fro
             # Put the team in the schedule
             schedule[hour].append(team)
             prev_team[position] = team
+
             # Even if there was no swap, the chosen team should get its time to rest
             for name in team: set_ttr(hour, name, ttr_db)
+            for name in team: prev_position_db[name] = [position, hour]
 
         # End of hour - update TTR
         decrement_ttr(ttr_db)
@@ -645,6 +659,10 @@ def print_db(header, db):
 # Getting the lowest items and keys of the values for an "n" amount of numbers above the lowest ttr
 # Returns the names with ttr in [TTR, TTR+1, TTR+2, ... TTR+n-1]
 def get_list_of_lowest_ttrs(ttr_db):
+    # Sanity
+    if not len(ttr_db):
+        error("At function get_list_of_lowest_ttrs() got an empty DB")
+
     # Get list of all available TTRs
     list_of_unique_available_ttr_values = []
     for item in ttr_db.items():
@@ -662,7 +680,7 @@ def get_list_of_lowest_ttrs(ttr_db):
     for item in ttr_db.items():
         name = item[0]
         ttr = item[1]
-        if ttr < 0 and ttr in list_of_n_lowest_ttrs:
+        if ttr <= 0 and ttr in list_of_n_lowest_ttrs:
             names_with_lowest_ttrs.append(name)
 
     return names_with_lowest_ttrs
@@ -687,8 +705,10 @@ def get_lowest_ttr(ttr_db):
 ##################################################################################
 # Update TTR DB with previous schedule
 # Result: DB, list
-def update_db_with_prev_schedule(valid_names, db, schedule):
+def update_db_with_prev_schedule(valid_names, ttr_db, prev_position_db, schedule):
+    # Init
     night_list = []
+
     for hour in range(HOURS_IN_DAY):
         if hour in night_hours_rd:
             is_night = 1
@@ -703,15 +723,19 @@ def update_db_with_prev_schedule(valid_names, db, schedule):
                 if not name in valid_names: continue
 
                 # Note: "+1" is needed to cancel the following decrement of the whole DB
-                set_ttr(hour, name, db)
+                set_ttr(hour, name, ttr_db)
                 if is_night:
                     if name not in night_list:
                         night_list.append(name)
 
-        # Update TTS (for each hour, not for each position)
-        decrement_ttr(db)
+                # Update prev_position_db
+                prev_position_db[name] = [position, hour] # FIXME: better absolute hour?
 
-    return db, night_list
+        # Update TTS (for each hour, not for each position)
+        decrement_ttr(ttr_db)
+    print(f"prev_position_db: {prev_position_db}")
+
+    return ttr_db, night_list
 
 
 ##################################################################################
@@ -875,12 +899,17 @@ def check_fairness(db, schedule):
 
 ##################################################################################
 def standard_deviation(hours_served, average, do_print):
+    # FIXME: bug in this function, needs debug
+    # Looks like it's called twice, with different types of DB
+    return 0
     # In order to calculate the standard deviation you need to calculate the sum of the
     # differences between all the people and the average to the power of 2 and then divide
     # that by the number of people and then square root all of that
     sum_of_delta_hours = 0
     number_of_people = len(hours_served)
+    print(f"hours_served: {hours_served}")
     for name in hours_served:
+        #print(f"name: {name}")
         sum_of_delta_hours += math.pow(average - hours_served[name], 2)
     standard_deviation_value = math.sqrt(sum_of_delta_hours / number_of_people)
     # If you want to print set do_print to True
@@ -1054,6 +1083,15 @@ def check_teams(schedule):
     sorted_teams_db = dict(sorted(teams_db.items(), key=lambda item: item[1]))
     print_delimiter_and_str(f"Teams: {sorted_teams_db}")
 
+##################################################################################
+# Init position_db {name} --> {position_index: hour}
+def init_positions_db(list_of_names):
+    prev_position_db = {}
+
+    for name in list_of_names:
+        prev_position_db[name] = [0, 0]
+
+    return prev_position_db
 
 ##################################################################################
 # Check distribution of people between positions
@@ -1203,10 +1241,12 @@ def parse_input_file(prev_date_str):
     # Get "Time off/on" information
     cfg.time_off = extract_personal_constraints(prev_date_str, "Time off")
     cfg.time_on  = extract_personal_constraints(prev_date_str, "Time on")
-    print(f"Time on: {cfg.time_on}")
 
     # Get valid names from the original "List of people"
     cfg.people_names = ttr_db.keys()
+
+    # Previous position DB {name} --> [prev_hour_served_in_this_position list]
+    prev_position_db = init_positions_db(cfg.people_names)
 
     # Get configurations
     cfg.position = get_positions_cfg()
@@ -1214,7 +1254,7 @@ def parse_input_file(prev_date_str):
     # Get previous schedule
     prev_schedule = get_prev_schedule(prev_date_str, cfg.position_names())
 
-    return ttr_db, prev_schedule, cfg
+    return ttr_db, prev_position_db, prev_schedule, cfg
 
 
 ##################################################################################
@@ -1225,7 +1265,7 @@ def main():
     prev_date_str = parse_command_line_arguments()
 
     # Extract all necessary information from input file
-    ttr_db, prev_schedule, cfg = parse_input_file(prev_date_str)
+    ttr_db, prev_position_db, prev_schedule, cfg = parse_input_file(prev_date_str)
 
     # Init total new schedule
     total_new_schedule = prev_schedule.copy()
@@ -1234,7 +1274,7 @@ def main():
     for day in range(DAYS_TO_PLAN):
         # Build next day schedule
         curr_date_str = get_next_date(prev_date_str)
-        new_schedule = build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, cfg, day)
+        new_schedule = build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, prev_position_db, cfg, day)
 
         # Append new_schedule to total
         total_new_schedule = total_new_schedule + new_schedule
