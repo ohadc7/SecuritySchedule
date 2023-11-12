@@ -145,7 +145,7 @@ class PositionCfg:
 # User personal data
 ##################################################################################
 class PersonalData:
-    def __init__(self, name="", ttr=0, prev_position="", total=0):
+    def __init__(self, name="", ttr=0, prev_position=-1, total=0):
         # User name
         self.name = name
         # Remaining time to rest
@@ -157,6 +157,11 @@ class PersonalData:
         # Availability
         self.time_off = []
         self.time_on  = []
+
+    def print(self):
+        print(f"Name: {self.name.ljust(COLUMN_WIDTH)} TTR = {self.ttr}, prev_position = '{self.prev_position}', total_hours = {self.total}")
+        print(f"Time off: {self.time_off}")
+        print(f"Time on:  {self.time_on}")
 
     # Check if the user is available in the specified hour
     def is_available(self, absolute_hour):
@@ -175,14 +180,53 @@ class PersonalData:
 # All users DB
 ##################################################################################
 class UsersDB:
-    def __init__():
+
+    def __init__(self, valid_names=[]):
+        # List of valid names, as defined in "List of people"
+        # Other names are ignored
+        self.valid_names = valid_names
+
         # Users data is a dict [name] --> PersonalData
         self.users_data = {}
+        for name in valid_names:
+            self.users_data[name] = PersonalData(name)
 
+    # Print single user data
+    def print_user(self, name):
+        if name in self.users_data.keys():
+            self.users_data[name].print()
+        else:
+            print(f"No '{name}' in users DB")
+
+    # Print all users data
+    def print(self):
+        print_delimiter_and_str("Users DB")
+        print_delimiter()
+        print(f"Valid names: {self.valid_names}")
+        print_delimiter()
+        for name in self.users_data.keys():
+            self.users_data[name].print()
+
+    # Decrement TTR for all users
     def decrement_ttr(self):
         for name in self.users_data[name]:
             self.users_data[name][ttr] -= 1
 
+    # Set time OFF information for all users
+    def set_time_off(self, dict_time_off):
+        for name in dict_time_off:
+            if name in self.users_data.keys():
+                self.users_data[name].time_off = dict_time_off[name]
+            else:
+                error(f"'{name}' exists in 'Time off', but not in 'List of people'")
+
+    # Set time ON information for all users
+    def set_time_on(self, dict_time_on):
+        for name in dict_time_on:
+            if name in self.users_data.keys():
+                self.users_data[name].time_on = dict_time_on[name]
+            else:
+                error(f"'{name}' exists in 'Time on', but not in 'List of people'")
 
 ##################################################################################
 # Utils
@@ -546,7 +590,6 @@ def get_available_ttr_db(ttr_db, prev_position_db, curr_position, is_night, nigh
 
         # Do not add people not available due to time off/on
         if not is_available(name, real_hour, cfg):
-            print(f"{name} is not available on {real_hour}")
             continue
 
         # Exclude people with positive TTR (didn't get their rest yet)
@@ -1292,12 +1335,26 @@ def check_prev_name(prev_name):
         error(
             f"Previous sheet name must be a valid date in the format '{date_format}'. I know that the example is misleading and I apologize for that :) Will fix")
 
+##################################################################################
+# Extract list of valid names from XLS
+def extract_valid_names():
+    # Get list of names from XLS
+    all_cells = extract_column_from_sheet("List of people", "People")
+
+    # Add to list only non-empty values
+    valid_names = []
+    for name in all_cells:
+        if type(name) is str:
+            valid_names.append(name[::-1])
+
+    return valid_names
 
 ##################################################################################
 # Extract all necessary information from input file
 def parse_input_file(prev_date_str):
     # Create an instance of the Cfg class
     cfg = Cfg()
+    users_db = UsersDB(extract_valid_names())
 
     # Init TTR DB {name} -> {time to rest}
     ttr_db = init_ttr_db()
@@ -1305,6 +1362,9 @@ def parse_input_file(prev_date_str):
     # Get "Time off/on" information
     cfg.time_off = extract_personal_constraints(prev_date_str, "Time off")
     cfg.time_on  = extract_personal_constraints(prev_date_str, "Time on")
+
+    users_db.set_time_off(cfg.time_off)
+    users_db.set_time_on(cfg.time_on)
 
     # Get valid names from the original "List of people"
     cfg.people_names = ttr_db.keys()
@@ -1318,18 +1378,19 @@ def parse_input_file(prev_date_str):
     # Get previous schedule
     prev_schedule = get_prev_schedule(prev_date_str, cfg.position_names())
 
-    return ttr_db, prev_position_db, prev_schedule, cfg
+    return users_db, ttr_db, prev_position_db, prev_schedule, cfg
 
 
 ##################################################################################
 # Main
 ##################################################################################
 def main():
+
     # Parse script arguments
     prev_date_str = parse_command_line_arguments()
 
     # Extract all necessary information from input file
-    ttr_db, prev_position_db, prev_schedule, cfg = parse_input_file(prev_date_str)
+    users_db, ttr_db, prev_position_db, prev_schedule, cfg = parse_input_file(prev_date_str)
 
     # Init total new schedule
     total_new_schedule = prev_schedule.copy()
