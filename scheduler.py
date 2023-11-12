@@ -105,15 +105,9 @@ PURPLE = 4
 ##################################################################################
 # Class Cfg holds all user configurations
 ##################################################################################
-class Cfg:
+class PositionsDB:
     # Initialize the members
     def __init__(self):
-        # List of valid people names
-        self.people_names = []
-        # Disc {name} --> [list of hours when the person is absent]
-        self.time_off = {}
-        # Disc {name} --> [list of hours when the person is available]
-        self.time_on = {}
         # List of PositionCfg objects
         self.position = []
 
@@ -145,7 +139,7 @@ class PositionCfg:
 # User personal data
 ##################################################################################
 class PersonalData:
-    def __init__(self, name="", ttr=0, prev_position=-1, total=0):
+    def __init__(self, name="", ttr=0, prev_position=-1, total=0, time_off=[], time_on=[]):
         # User name
         self.name = name
         # Remaining time to rest
@@ -155,8 +149,8 @@ class PersonalData:
         # Total hours served until now
         self.total = total
         # Availability
-        self.time_off = []
-        self.time_on  = []
+        self.time_off = time_off
+        self.time_on  = time_on
 
     def print(self):
         print(f"Name: {self.name.ljust(COLUMN_WIDTH)} TTR = {self.ttr}, prev_position = '{self.prev_position}', total_hours = {self.total}")
@@ -166,15 +160,41 @@ class PersonalData:
     # Check if the user is available in the specified hour
     def is_available(self, absolute_hour):
         # Check time off
-        if absolute_hour in time_off:
+        if absolute_hour in self.time_off:
             return 0
 
         # Check time on
-        if absolute_hour not in time_on:
+        if len(self.time_on) > 0 and absolute_hour not in self.time_on:
             return 0
 
         # Default
         return 1
+
+    # Set night/day TTR for the user
+    def set_ttr(self, is_night):
+        # Note: need to handle a special case where Moshe starts shift at night, continues at day
+        # For example, shift of 03:00 - 07:00
+        # We detect such case when the previous TTR value ==  TTR_NIGHT+1
+        # In this case, restore NIGHT_TTR+1
+        if self.ttr == TTR_NIGHT:
+            self.ttr += 1
+            return
+
+        # Normal case
+        if is_night:
+            self.ttr = TTR_NIGHT + 1
+        else:
+            self.ttr = TTR_DAY + 1
+
+    def set_prev_position(self, position):
+        self.prev_position = position
+
+    def increment_total_hours(self):
+        self.total += 1
+
+    def copy(self):
+        return PersonalData(self.name, self.ttr, self.prev_position, self.total, self.time_off, self.time_on)
+
 
 ##################################################################################
 # All users DB
@@ -209,8 +229,8 @@ class UsersDB:
 
     # Decrement TTR for all users
     def decrement_ttr(self):
-        for name in self.users_data[name]:
-            self.users_data[name][ttr] -= 1
+        for name in self.users_data.keys():
+            self.users_data[name].ttr -= 1
 
     # Set time OFF information for all users
     def set_time_off(self, dict_time_off):
@@ -227,6 +247,85 @@ class UsersDB:
                 self.users_data[name].time_on = dict_time_on[name]
             else:
                 error(f"'{name}' exists in 'Time on', but not in 'List of people'")
+
+    # Set TTR for name
+    def set_ttr(self, name, is_night):
+        # Skip people that exist in prev_schedule, but not in current "List of people"
+        if not name in self.users_data.keys():
+            warning(f"Cannot set TTR for '{name}', not in 'List of people'")
+            return
+
+        # Set ttr
+        self.users_data[name].set_ttr(is_night)
+        return
+
+
+    def set_prev_position(self, name, position):
+        # Skip people that exist in prev_schedule, but not in current "List of people"
+        if not name in self.users_data.keys():
+            warning(f"Cannot set prev_position for '{name}', not in 'List of people'")
+            return
+
+        # Set prev_position
+        self.users_data[name].set_prev_position(position)
+        return
+
+
+    def increment_total_hours(self, name):
+        # Skip people that exist in prev_schedule, but not in current "List of people"
+        if not name in self.users_data.keys():
+            warning(f"Cannot increment total_hours for '{name}', not in 'List of people'")
+            return
+
+        # Set prev_position
+        self.users_data[name].increment_total_hours()
+        return
+
+    def is_available(self, name, absolute_hour):
+        # Skip people that exist in prev_schedule, but not in current "List of people"
+        if not name in self.users_data.keys():
+            warning(f"Cannot check availability for '{name}', not in 'List of people'")
+            return
+
+        # Check availability
+        return self.users_data[name].is_available(absolute_hour)
+
+    def get_ttr(self, name):
+        # Skip people that exist in prev_schedule, but not in current "List of people"
+        if not name in self.users_data.keys():
+            error(f"Cannot get TTR for '{name}', not in 'List of people'")
+            return
+        else:
+            return self.users_data[name].ttr
+
+    def add_user(self, new_user):
+        name = new_user.name
+        if name in self.users_data.keys():
+            error(f"Cannot add user '{name}', already exists in UsersDB")
+        else:
+            self.users_data[name] = new_user.copy()
+
+    def del_user(self, name):
+        if name in self.users_data.keys():
+            del self.users_data[name]
+        else:
+            error(f"Cannot delete user '{name}', does not exist in UsersDB")
+
+
+    def is_empty(self):
+        return (len(self.users_data) == 0)
+
+
+    # Get list of names that recently served at the specified position
+    def remove_repetative(self, curr_position):
+        names_to_delete = []
+        for name in self.users_data.keys():
+            if self.users_data[name].prev_position == curr_position and len(names_to_delete) < len(self.users_data.keys())-1:
+                names_to_delete.append(name)
+
+        # Remove these people from the DB
+        for name in names_to_delete:
+            self.del_user(name)
 
 ##################################################################################
 # Utils
@@ -519,7 +618,7 @@ def get_action_enum(action_str):
 
 ##################################################################################
 # Choose team
-def choose_team(hour, night_list, ttr_db, prev_position_db, curr_position, team_size, cfg, day_from_beginning):
+def choose_team(hour, night_list, users_db, curr_position, team_size, day_from_beginning):
     # Init
     team = []
     is_night = 1 if hour in NIGHT_HOURS or hour == 23 else  0
@@ -530,42 +629,45 @@ def choose_team(hour, night_list, ttr_db, prev_position_db, curr_position, team_
     # Build team
     for i in range(team_size):
         # Build local db - exclude previous night watchers & people not available at this time
-        local_ttr_db = get_available_ttr_db(ttr_db, prev_position_db, curr_position, is_night, night_list, real_hour, cfg)
+        local_users_db = get_available_users_db(users_db, curr_position, is_night, night_list, real_hour)
 
         # Choose team member
-        name = choose_team_member(local_ttr_db)
+        name = choose_team_member(local_users_db)
 
         # Check for violations
-        verify_team_member(name, ttr_db, is_night, real_hour, night_list, cfg)
+        verify_team_member(name, users_db, is_night, real_hour, night_list)
 
         # Update TTR
         team.append(name)
-        set_ttr(hour, name, ttr_db)
-        # Ido: add here position DB update
+        users_db.set_ttr(name, is_night)
 
     return team
 
 
 ##################################################################################
-# Choose a single person
-def choose_team_member(ttr_db):
+# Choose a single person ofy of available
+def choose_team_member(users_db):
 
-    # Get lowest TTR
-    # Ido: add consideration of position DB
-    name = get_lowest_ttr(ttr_db)
+    # Get all names for with <SHUFFLE_COEFFICIENT> TTRs
+    # (TTR, TTR+1, ... , TTR+SHUFFLE_COEFFICIENT-1)
+    all_names_with_lowest_ttr = get_list_of_lowest_ttrs(users_db)
 
+    # Choose random name
+    shuffled_list_of_names = random.sample(all_names_with_lowest_ttr, len(all_names_with_lowest_ttr))
+
+    name = shuffled_list_of_names[0]
     return name
 
 
 ##################################################################################
 # Check chosen team member for violations
-def verify_team_member(name, ttr_db, is_night, absolute_hour, night_list, cfg):
+def verify_team_member(name, users_db, is_night, absolute_hour, night_list):
     relative_hour  = absolute_hour % HOURS_IN_DAY
     message_header = f"At {relative_hour}:00, the chosen team member ({name}) "
 
-    if ttr_db[name] > 0:
+    if users_db.get_ttr(name) > 0:
         error(message_header+f"has a positive TTR {ttr_db[name]}\n")
-    if not is_available(name, absolute_hour, cfg):
+    if not users_db.is_available(name, absolute_hour):
         error(message_header+f"should be on vacation (try --shuffle {SHUFFLE_COEFFICIENT+1})\n")
     if is_night and name in night_list:
         error(message_header+f"has already served last night")
@@ -575,65 +677,43 @@ def verify_team_member(name, ttr_db, is_night, absolute_hour, night_list, cfg):
 
 ##################################################################################
 # Build ttr_db, but only people available to be chosen
-def get_available_ttr_db(ttr_db, prev_position_db, curr_position, is_night, night_list, real_hour, cfg):
+def get_available_users_db(users_db, curr_position, is_night, night_list, real_hour):
     # Init
     available_ttr_db = {}
+    available_users_db = UsersDB()
 
     # Build available people DB
-    for item in ttr_db.items():
+    for item in users_db.users_data.items():
         name = item[0]
-        ttr = item[1]
+        user_data = item[1]
+        ttr = user_data.ttr
 
         # If is night, do not add previous night watchers to local_db
         if is_night and name in night_list:
             continue
 
         # Do not add people not available due to time off/on
-        if not is_available(name, real_hour, cfg):
+        if not users_db.is_available(name, real_hour):
             continue
 
         # Exclude people with positive TTR (didn't get their rest yet)
-        if ttr_db[name] > 0:
+        if ttr > 0:
             continue
 
         # If got this far, the person is available
-        available_ttr_db[name] = ttr
+        available_users_db.add_user(user_data)
 
     # Collect people that recently served in this position
-    # FIXME: may affect fairness
-    names_to_remove = []
-    for name in available_ttr_db.keys():
-        if prev_position_db[name][0] == curr_position and len(names_to_remove) < len(available_ttr_db.keys())-1:
-            names_to_remove.append(name)
+    available_users_db.remove_repetative(curr_position)
 
-    # Remove these people from the DB
-    for name in names_to_remove:
-            del available_ttr_db[name]
-
-    return available_ttr_db
-
-
-##################################################################################
-# Check if the person is available at the specified hour
-def is_available(name, real_hour, cfg):
-    # Check time off
-    if real_hour in cfg.time_off[name]:
-        return 0
-
-    # Check time on
-    if cfg.time_on[name]:
-        if real_hour not in cfg.time_on[name]:
-            return 0
-
-    # Default
-    return 1
+    return available_users_db
 
 
 ##################################################################################
 # Resize team
 # Do not replace all team members, but, based on the previous team,
 # release or add N members
-def resize_team(hour, night_list, ttr_db, prev_position_db, curr_position, old_team, new_team_size, cfg, day_from_beginning):
+def resize_team(hour, night_list, users_db, curr_position, old_team, new_team_size, day_from_beginning):
     if new_team_size == 0:
         return [""]
 
@@ -653,14 +733,14 @@ def resize_team(hour, night_list, ttr_db, prev_position_db, curr_position, old_t
     else:
         # Increase team size
         num_of_members_to_add = new_team_size - old_team_size
-        new_team += choose_team(hour, night_list, ttr_db, prev_position_db, curr_position, num_of_members_to_add, cfg, day_from_beginning)
+        new_team += choose_team(hour, night_list, users_db, curr_position, num_of_members_to_add, day_from_beginning)
 
     return new_team
 
 
 ##################################################################################
 # Build schedule for a single day, based on the previous day
-def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, prev_position_db, cfg, day_from_beginning):
+def build_single_day_schedule(curr_date_str, prev_schedule, users_db, cfg, day_from_beginning):
     schedule = [[] for _ in range(HOURS_IN_DAY)]
     # Stores the current team at the specific position
     # If no action, the same team continues to the next hour
@@ -668,10 +748,12 @@ def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, prev_positio
     prev_team = [[] for _ in range(NUM_OF_POSITIONS)]
 
     # Get TTR information from the previous schedule
-    ttr_db, night_list = update_db_with_prev_schedule(cfg.people_names, ttr_db, prev_position_db, prev_schedule)
+    night_list = update_db_with_prev_schedule(users_db, prev_schedule)
+
 
     # For each hour
     for hour in range(HOURS_IN_DAY):
+        is_night = 1 if hour in NIGHT_HOURS else 0
         # For each position
         for position in range(NUM_OF_POSITIONS):
             # Assign team (should be a function)
@@ -680,9 +762,9 @@ def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, prev_positio
             team = prev_team[position]
 
             if action == SWAP:
-                team = choose_team(hour, night_list, ttr_db, prev_position_db, position, team_size, cfg, day_from_beginning)
+                team = choose_team(hour, night_list, users_db, position, team_size, day_from_beginning)
             elif action == RESIZE:
-                team = resize_team(hour, night_list, ttr_db, prev_position_db, position, team, team_size, cfg, day_from_beginning)
+                team = resize_team(hour, night_list, users_db, position, team, team_size, day_from_beginning)
             elif hour == 0:
                 team = prev_schedule[HOURS_IN_DAY - 1][position]
                 # Note: these people should be recorded as night watchers
@@ -695,17 +777,16 @@ def build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, prev_positio
             prev_team[position] = team
 
             # Even if there was no swap, the chosen team should get its time to rest
-            for name in team: set_ttr(hour, name, ttr_db)
-            for name in team: prev_position_db[name] = [position, hour]
+            for name in team:
+                users_db.set_ttr(name, is_night)
+                users_db.set_prev_position(name, position)
+                users_db.increment_total_hours(name)
 
         # End of hour - update TTR
-        decrement_ttr(ttr_db)
+        users_db.decrement_ttr()
 
     # Print to screen and (optionally) to file
     output_schedule(schedule, curr_date_str, cfg.position_names())
-
-    # Check who was idle this day (currently no action follows)
-    check_for_idle(ttr_db, schedule)
 
     return schedule
 
@@ -763,16 +844,16 @@ def print_db(header, db):
 ##################################################################################
 # Getting the lowest items and keys of the values for an "n" amount of numbers above the lowest ttr
 # Returns the names with ttr in [TTR, TTR+1, TTR+2, ... TTR+n-1]
-def get_list_of_lowest_ttrs(ttr_db):
+def get_list_of_lowest_ttrs(users_db):
     # Sanity
-    if not len(ttr_db):
-        error("At function get_list_of_lowest_ttrs() got an empty DB")
+    if users_db.is_empty():
+        error("At function get_list_of_lowest_ttrs() got an empty users DB")
 
     # Get list of all available TTRs
     list_of_unique_available_ttr_values = []
-    for item in ttr_db.items():
-        if item[1] not in list_of_unique_available_ttr_values:
-            list_of_unique_available_ttr_values.append(item[1])
+    for item in users_db.users_data.items():
+        if item[1].ttr not in list_of_unique_available_ttr_values:
+            list_of_unique_available_ttr_values.append(item[1].ttr)
 
     # Sort the list
     sorted_list_of_ttr_values = sorted(list_of_unique_available_ttr_values)
@@ -782,9 +863,9 @@ def get_list_of_lowest_ttrs(ttr_db):
 
     # Get list of names (only for negative TTRs)
     names_with_lowest_ttrs = []
-    for item in ttr_db.items():
+    for item in users_db.users_data.items():
         name = item[0]
-        ttr = item[1]
+        ttr  = item[1].ttr
         if ttr <= 0 and ttr in list_of_n_lowest_ttrs:
             names_with_lowest_ttrs.append(name)
 
@@ -792,54 +873,36 @@ def get_list_of_lowest_ttrs(ttr_db):
 
 
 ##################################################################################
-# Get the name with lowest TTR value
-# Offset allows to skip N lowest values
-def get_lowest_ttr(ttr_db):
-    # Get all names for with <SHUFFLE_COEFFICIENT> TTRs
-    # (TTR, TTR+1, ... , TTR+SHUFFLE_COEFFICIENT-1)
-    all_names_with_lowest_ttr = get_list_of_lowest_ttrs(ttr_db)
-
-    # Choose random name
-    shuffled_list_of_names = random.sample(all_names_with_lowest_ttr, len(all_names_with_lowest_ttr))
-
-    name = shuffled_list_of_names[0]
-    # print(f"Sorted all_names_with_lowest_ttr: {all_names_with_lowest_ttr}, chosen: {name}, offset: {offset}")
-    return name
-
-
-##################################################################################
 # Update TTR DB with previous schedule
 # Result: DB, list
-def update_db_with_prev_schedule(valid_names, ttr_db, prev_position_db, schedule):
+def update_db_with_prev_schedule(users_db, schedule):
     # Init
     night_list = []
 
     for hour in range(HOURS_IN_DAY):
-        if hour in NIGHT_HOURS:
-            is_night = 1
-        else:
-            is_night = 0
+        is_night = 1 if hour in NIGHT_HOURS else 0
 
         for position in range(NUM_OF_POSITIONS):
             team = schedule[hour][position]
 
             for name in team:
                 # Ignore people that are not on the list
-                if not name in valid_names: continue
+                if not name in users_db.valid_names: continue
 
                 # Note: "+1" is needed to cancel the following decrement of the whole DB
-                set_ttr(hour, name, ttr_db)
+                users_db.set_ttr(name, is_night)
                 if is_night:
                     if name not in night_list:
                         night_list.append(name)
 
-                # Update prev_position_db
-                prev_position_db[name] = [position, hour] # FIXME: better absolute hour?
+                # Update prev_position
+                users_db.set_prev_position(name, position)
+                users_db.increment_total_hours(name)
 
         # Update TTS (for each hour, not for each position)
-        decrement_ttr(ttr_db)
+        users_db.decrement_ttr()
 
-    return ttr_db, night_list
+    return night_list
 
 
 ##################################################################################
@@ -944,12 +1007,15 @@ def color_column(worksheet, index, color):
 
 ##################################################################################
 # Check fairness
-def check_fairness(db, schedule, night_hours=NIGHT_HOURS):
+# FIXME: no need to calculate hours_served, information already exists in users_db
+# FIXME: currently cannot use, because there's a bug in accumulated total
+def check_fairness(users_db, schedule, night_hours=NIGHT_HOURS):
+
     # Init hours_served, night_hours_served, score_value(score = (hours_served-night_hours_served) + (night_hours_served)*1.5
     score_value = {}
     night_hours_served = {}
     hours_served = {}
-    for name in db:
+    for name in users_db.valid_names:
         score_value[name] = 0
         night_hours_served[name] = 0
         hours_served[name] = 0
@@ -965,6 +1031,12 @@ def check_fairness(db, schedule, night_hours=NIGHT_HOURS):
                     night_hours_served[name] += 1
                 if name != 'nan' and name in hours_served:
                     hours_served[name] += 1
+
+    # Compare to total_hours inside the DB
+    # for name in hours_served.keys():
+    #     if hours_served[name] != users_db.users_data[name].total:
+    #         error(f"For user {name}, calculated total {hours_served[name]} != accumulated total {users_db.users_data[name].total}")
+
     # Report
     print_delimiter_and_str("Check fairness")
 
@@ -1071,10 +1143,10 @@ def make_graph(night_hours_served, hours_served, average, night_hours_average, s
 
 ##################################################################################
 # Verify result
-def verify(cfg_people_names, schedule):
+def verify(valid_names, schedule):
     # Init last_served
     last_served = {}
-    for name in cfg_people_names:
+    for name in valid_names:
         last_served[name] = -1
 
     # Check schedule
@@ -1093,29 +1165,6 @@ def verify(cfg_people_names, schedule):
                             error(
                                 f"Poor {name} did not get his {expected_ttr} hour rest (served at {last_served_hour}, then at {hour})")
                     last_served[name] = hour
-
-
-##################################################################################
-# Check who wasn't assigned
-def check_for_idle(db, schedule):
-    # Init participated
-    participated = {}
-    for name in db:
-        participated[name] = 0
-
-    # Collect data from schedule
-    for hour in range(len(schedule)):
-        line = schedule[hour]
-        for team in line:
-            for name in team:
-                participated[name] = 1
-
-    # Check who didn't participate
-    not_assigned = [item for item in participated.keys() if participated[item] == 0]
-    # if not_assigned:
-    #     print(f"Not assigned: {not_assigned}")
-
-    return
 
 
 ##################################################################################
@@ -1188,16 +1237,6 @@ def check_teams(schedule):
     # Sort by number of occurance
     sorted_teams_db = dict(sorted(teams_db.items(), key=lambda item: item[1]))
     print_delimiter_and_str(f"Teams: {sorted_teams_db}")
-
-##################################################################################
-# Init position_db {name} --> [position_index, hour]
-def init_positions_db(list_of_names):
-    prev_position_db = {}
-
-    for name in list_of_names:
-        prev_position_db[name] = [-1, -1]
-
-    return prev_position_db
 
 ##################################################################################
 # Check distribution of people between positions
@@ -1353,32 +1392,20 @@ def extract_valid_names():
 # Extract all necessary information from input file
 def parse_input_file(prev_date_str):
     # Create an instance of the Cfg class
-    cfg = Cfg()
+    positions_db = PositionsDB()
     users_db = UsersDB(extract_valid_names())
 
-    # Init TTR DB {name} -> {time to rest}
-    ttr_db = init_ttr_db()
+    # Get personal time off/on
+    users_db.set_time_off(extract_personal_constraints(prev_date_str, "Time off"))
+    users_db.set_time_on(extract_personal_constraints(prev_date_str, "Time on"))
 
-    # Get "Time off/on" information
-    cfg.time_off = extract_personal_constraints(prev_date_str, "Time off")
-    cfg.time_on  = extract_personal_constraints(prev_date_str, "Time on")
-
-    users_db.set_time_off(cfg.time_off)
-    users_db.set_time_on(cfg.time_on)
-
-    # Get valid names from the original "List of people"
-    cfg.people_names = ttr_db.keys()
-
-    # Previous position DB {name} --> [prev_hour_served_in_this_position list]
-    prev_position_db = init_positions_db(cfg.people_names)
-
-    # Get configurations
-    cfg.position = get_positions_cfg()
+    # Get positions configurations
+    positions_db.position = get_positions_cfg()
 
     # Get previous schedule
-    prev_schedule = get_prev_schedule(prev_date_str, cfg.position_names())
+    prev_schedule = get_prev_schedule(prev_date_str, positions_db.position_names())
 
-    return users_db, ttr_db, prev_position_db, prev_schedule, cfg
+    return users_db, prev_schedule, positions_db
 
 
 ##################################################################################
@@ -1390,7 +1417,7 @@ def main():
     prev_date_str = parse_command_line_arguments()
 
     # Extract all necessary information from input file
-    users_db, ttr_db, prev_position_db, prev_schedule, cfg = parse_input_file(prev_date_str)
+    users_db, prev_schedule, positions_db = parse_input_file(prev_date_str)
 
     # Init total new schedule
     total_new_schedule = prev_schedule.copy()
@@ -1399,7 +1426,7 @@ def main():
     for day in range(DAYS_TO_PLAN):
         # Build next day schedule
         curr_date_str = get_next_date(prev_date_str)
-        new_schedule = build_single_day_schedule(curr_date_str, prev_schedule, ttr_db, prev_position_db, cfg, day)
+        new_schedule = build_single_day_schedule(curr_date_str, prev_schedule, users_db, positions_db, day)
 
         # Append new_schedule to total
         total_new_schedule = total_new_schedule + new_schedule
@@ -1409,12 +1436,12 @@ def main():
         prev_schedule = new_schedule
 
     # Run checks
-    verify(cfg.people_names, total_new_schedule)
+    verify(users_db.valid_names, total_new_schedule)
     if (PRINT_STATISTICS):
         check_teams(total_new_schedule)
-        check_positions(total_new_schedule, cfg.position_names())
+        check_positions(total_new_schedule, positions_db.position_names())
 
-    check_fairness(ttr_db, total_new_schedule, [23, 0, 1, 2, 3, 4, 5, 6])#range(0, 7))
+    check_fairness(users_db, total_new_schedule, [23, 0, 1, 2, 3, 4, 5, 6]) #range(0, 7))
 
 
 ##################################################################################
