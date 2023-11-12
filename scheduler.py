@@ -312,6 +312,11 @@ class UsersDB:
             error(f"Cannot delete user '{name}', does not exist in UsersDB")
 
 
+    def update_user(self, name, position, is_night):
+        self.set_ttr(name, is_night)
+        self.set_prev_position(name, position)
+        self.increment_total_hours(name)
+
     def is_empty(self):
         return (len(self.users_data) == 0)
 
@@ -778,9 +783,7 @@ def build_single_day_schedule(curr_date_str, prev_schedule, users_db, cfg, day_f
 
             # Even if there was no swap, the chosen team should get its time to rest
             for name in team:
-                users_db.set_ttr(name, is_night)
-                users_db.set_prev_position(name, position)
-                users_db.increment_total_hours(name)
+                users_db.update_user(name, position, is_night)
 
         # End of hour - update TTR
         users_db.decrement_ttr()
@@ -889,15 +892,12 @@ def update_db_with_prev_schedule(users_db, schedule):
                 # Ignore people that are not on the list
                 if not name in users_db.valid_names: continue
 
-                # Note: "+1" is needed to cancel the following decrement of the whole DB
-                users_db.set_ttr(name, is_night)
                 if is_night:
                     if name not in night_list:
                         night_list.append(name)
 
-                # Update prev_position
-                users_db.set_prev_position(name, position)
-                users_db.increment_total_hours(name)
+                # Update user_db
+                users_db.update_user(name, position, is_night)
 
         # Update TTS (for each hour, not for each position)
         users_db.decrement_ttr()
@@ -1008,7 +1008,9 @@ def color_column(worksheet, index, color):
 ##################################################################################
 # Check fairness
 # FIXME: no need to calculate hours_served, information already exists in users_db
-# FIXME: currently cannot use, because there's a bug in accumulated total
+# FIXME: currently cannot use, because there's a bug in accumulated total,
+# because it is incremented twice: while parsing prev_schedule, while building the new schedule
+# Should be incremented for the first (CFG) prev_schedule + all the new ones
 def check_fairness(users_db, schedule, night_hours=NIGHT_HOURS):
 
     # Init hours_served, night_hours_served, score_value(score = (hours_served-night_hours_served) + (night_hours_served)*1.5
@@ -1046,9 +1048,8 @@ def check_fairness(users_db, schedule, night_hours=NIGHT_HOURS):
 
     print_delimiter()
     for name in hours_served:
-        print(
-                    f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(hours_served[name]).ljust(4)}\t{('*' * hours_served[name]).ljust(most_hours_served+5)}"
-                    f" Night shifts: {str(int(night_hours_served[name]/2)).ljust(4)}" + ('*' * int(night_hours_served[name]/2)))
+        print(f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(hours_served[name]).ljust(4)}\t{('*' * hours_served[name]).ljust(most_hours_served+5)}"
+              f" Night shifts: {str(int(night_hours_served[name]/2)).ljust(4)}" + ('*' * int(night_hours_served[name]/2)))
 
     # Calculate average, night average
     total = sum(value for value in hours_served.values())
@@ -1056,13 +1057,14 @@ def check_fairness(users_db, schedule, night_hours=NIGHT_HOURS):
     night_hours_total = sum(value2 for value2 in night_hours_served.values())
     night_hours_average = int(night_hours_total / len(night_hours_served))
     night_shifts_average = int(night_hours_average/2)
-    # Print average
 
+    # Print average
     print_delimiter()
     print(f"Average: {str(average).ljust(COLUMN_WIDTH-3)} served: {str(average).ljust(4)}\t" + ("*" * average).ljust(
         most_hours_served + 5) + f" Night shifts:"
                                  f" {str(night_shifts_average).ljust(4)}" + "*" * night_shifts_average)
     print_delimiter()
+
     # Adding standard_deviation
     standard_deviation_value = standard_deviation("Total", hours_served, average, True)
     standard_deviation_value = standard_deviation("Night", night_hours_served, night_hours_average, True)
