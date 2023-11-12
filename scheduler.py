@@ -226,8 +226,8 @@ def parse_command_line_arguments():
     parser.add_argument("--seed", type=int, help="Seed")
     parser.add_argument("--shuffle", type=int, metavar='N',
                         help=f"Shuffle coefficient. Default is 4. Higher value gives more randomization, may reduce fairness for short runs")
-    parser.add_argument("--night_first", type=int, help="First hour of the night (must be after midnight)")
-    parser.add_argument("--night_last",  type=int, help="Last hour of the night")
+    parser.add_argument("--night_first", type=int, metavar='H0', help="First hour of the night (must be after midnight)")
+    parser.add_argument("--night_last",  type=int, metavar='H1', help="Last hour of the night")
 
 
     # Parse the command-line arguments
@@ -363,7 +363,7 @@ def extract_personal_constraints(prev_date_str, column_name):
     # Store the information in a dictionary {name} --> {time_off_str}
     personal_str = {}
     for i in range(len(list_of_names)):
-        name = list_of_names[i][::-1]
+        name = str(list_of_names[i])[::-1]
         if str(list_of_constraints[i]) == 'nan':
             personal_str[name] = ""
         else:
@@ -546,6 +546,7 @@ def get_available_ttr_db(ttr_db, prev_position_db, curr_position, is_night, nigh
 
         # Do not add people not available due to time off/on
         if not is_available(name, real_hour, cfg):
+            print(f"{name} is not available on {real_hour}")
             continue
 
         # Exclude people with positive TTR (didn't get their rest yet)
@@ -683,6 +684,11 @@ def output_schedule(schedule, date_str, cfg_position_names):
 
 # Set TTR for name
 def set_ttr(hour, name, db):
+    # Skip people that exist in prev_schedule, but not in current "List of people"
+    if not name in db:
+        warning(f"{name} exists in schedule, but not in 'List of people'")
+        return
+
     # Note: need to handle a special case where Moshe starts shift at night, continues at day
     # For example, shift of 03:00 - 07:00
     # We detect such case when the previous TTR value ==  TTR_NIGHT+1
@@ -912,7 +918,7 @@ def check_fairness(db, schedule, night_hours=NIGHT_HOURS):
     for hour in range(len(schedule)):
         for team in schedule[hour]:
             for name in team:
-                if hour % 24 in night_hours:
+                if hour % 24 in night_hours and name in night_hours_served:
                     night_hours_served[name] += 1
                 if name != 'nan' and name in hours_served:
                     hours_served[name] += 1
@@ -1203,7 +1209,7 @@ def check_positions(schedule, position_names):
                         f"name: {name} ,hour: {hour}:00, got again the same position: {position_names[position]}. Last hour: {samp_hour}")
                     warn_cnt += 1
 
-                # Update DB:   
+                # Update DB:
                 per_person_prev_position[name][position_idx] = position
                 per_person_prev_position[name][hour_idx] = hour
 
