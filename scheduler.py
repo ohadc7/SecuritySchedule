@@ -84,10 +84,7 @@ HOURS_IN_DAY = 24
 COLUMN_WIDTH = 27
 LINE_WIDTH = 10 + NUM_OF_POSITIONS * COLUMN_WIDTH
 
-# FIXME: either remove or add explanation.
-# Currently fails when using unique list, needs debug
-night_hours_rd = [1, 2, 3, 4]
-night_hours_wr = [23, 0, 1, 2, 3, 4]
+NIGHT_HOURS = [1, 2, 3, 4]
 
 ##################################################################################
 # Enums
@@ -109,13 +106,18 @@ PURPLE = 4
 # Class Cfg holds all user configurations
 ##################################################################################
 class Cfg:
+    # Initialize the members
     def __init__(self):
-        # Initialize the members
+        # List of valid people names
         self.people_names = []
+        # Disc {name} --> [list of hours when the person is absent]
         self.time_off = {}
+        # Disc {name} --> [list of hours when the person is available]
         self.time_on = {}
+        # List of PositionCfg objects
         self.position = []
 
+    # Extract position names from PositionCfg list
     def position_names(self):
         position_names = []
         for p in range(NUM_OF_POSITIONS):
@@ -138,6 +140,48 @@ class PositionCfg:
 
     def print(self):
         print(f"Position name: {self.name}, actions: {self.action}, team_size: {self.team_size}")
+
+##################################################################################
+# User personal data
+##################################################################################
+class PersonalData:
+    def __init__(self, name="", ttr=0, prev_position="", total=0):
+        # User name
+        self.name = name
+        # Remaining time to rest
+        self.ttr  = ttr
+        # Last position assigned to User
+        self.prev_position = prev_position
+        # Total hours served until now
+        self.total = total
+        # Availability
+        self.time_off = []
+        self.time_on  = []
+
+    # Check if the user is available in the specified hour
+    def is_available(self, absolute_hour):
+        # Check time off
+        if absolute_hour in time_off:
+            return 0
+
+        # Check time on
+        if absolute_hour not in time_on:
+            return 0
+
+        # Default
+        return 1
+
+##################################################################################
+# All users DB
+##################################################################################
+class UsersDB:
+    def __init__():
+        # Users data is a dict [name] --> PersonalData
+        self.users_data = {}
+
+    def decrement_ttr(self):
+        for name in self.users_data[name]:
+            self.users_data[name][ttr] -= 1
 
 
 ##################################################################################
@@ -182,22 +226,34 @@ def parse_command_line_arguments():
     parser.add_argument("--seed", type=int, help="Seed")
     parser.add_argument("--shuffle", type=int, metavar='N',
                         help=f"Shuffle coefficient. Default is 4. Higher value gives more randomization, may reduce fairness for short runs")
+    parser.add_argument("--night_first", type=int, help="First hour of the night (must be after midnight)")
+    parser.add_argument("--night_last",  type=int, help="Last hour of the night")
+
 
     # Parse the command-line arguments
     args = parser.parse_args()
 
+    # Sanity
+    if args.night_first is not None and args.night_last is None:
+        error("providing night_first, must also provide night_last")
+    if args.night_first is None and args.night_last is not None:
+        error("providing night_last, must also provide night_first")
+
     # Configure global variables
-    if args.file_name:  global INPUT_FILE_NAME;     INPUT_FILE_NAME = args.file_name
-    if args.days:       global DAYS_TO_PLAN;        DAYS_TO_PLAN = args.days
-    if args.positions:  global NUM_OF_POSITIONS;    NUM_OF_POSITIONS = args.positions
-    if args.seed:       global SEED;                SEED = args.seed; random.seed(SEED)
-    if args.ttrn:       global TTR_NIGHT;           TTR_NIGHT = args.ttrn
-    if args.ttrd:       global TTR_DAY;             TTR_DAY = args.ttrd
-    if args.graph:      global GRAPH;               GRAPH = args.graph;
-    if args.write:      global DO_WRITE;            DO_WRITE = args.write;
-    if args.personal:   global PERSONAL_SCHEDULE;   PERSONAL_SCHEDULE = args.personal;
-    if args.shuffle:    global SHUFFLE_COEFFICIENT; SHUFFLE_COEFFICIENT = args.shuffle;
-    if args.statistics: global PRINT_STATISTICS;    PRINT_STATISTICS = args.statistics;
+    if args.file_name:   global INPUT_FILE_NAME;     INPUT_FILE_NAME = args.file_name
+    if args.days:        global DAYS_TO_PLAN;        DAYS_TO_PLAN = args.days
+    if args.positions:   global NUM_OF_POSITIONS;    NUM_OF_POSITIONS = args.positions
+    if args.seed:        global SEED;                SEED = args.seed; random.seed(SEED)
+    if args.ttrn:        global TTR_NIGHT;           TTR_NIGHT = args.ttrn
+    if args.ttrd:        global TTR_DAY;             TTR_DAY = args.ttrd
+    if args.graph:       global GRAPH;               GRAPH = args.graph;
+    if args.write:       global DO_WRITE;            DO_WRITE = args.write;
+    if args.personal:    global PERSONAL_SCHEDULE;   PERSONAL_SCHEDULE = args.personal;
+    if args.shuffle:     global SHUFFLE_COEFFICIENT; SHUFFLE_COEFFICIENT = args.shuffle;
+    if args.statistics:  global PRINT_STATISTICS;    PRINT_STATISTICS = args.statistics;
+    if args.night_first is not None:
+        global NIGHT_HOURS;
+        NIGHT_HOURS = range(args.night_first, args.night_last);
 
     # Sanity checks
     if not os.path.exists(args.file_name):                    error(f"File {args.file_name} does not exist.")
@@ -422,7 +478,7 @@ def get_action_enum(action_str):
 def choose_team(hour, night_list, ttr_db, prev_position_db, curr_position, team_size, cfg, day_from_beginning):
     # Init
     team = []
-    is_night = 1 if hour in night_hours_wr else 0
+    is_night = 1 if hour in NIGHT_HOURS or hour == 23 else  0
 
     # Calculate absolute hour to use in personal constraints
     real_hour = day_from_beginning * 24 + hour
@@ -636,7 +692,7 @@ def set_ttr(hour, name, db):
         return
 
     # Normal case
-    if hour in night_hours_rd:
+    if hour in NIGHT_HOURS:
         db[name] = TTR_NIGHT + 1
     else:
         db[name] = TTR_DAY + 1
@@ -710,7 +766,7 @@ def update_db_with_prev_schedule(valid_names, ttr_db, prev_position_db, schedule
     night_list = []
 
     for hour in range(HOURS_IN_DAY):
-        if hour in night_hours_rd:
+        if hour in NIGHT_HOURS:
             is_night = 1
         else:
             is_night = 0
@@ -839,7 +895,7 @@ def color_column(worksheet, index, color):
 
 ##################################################################################
 # Check fairness
-def check_fairness(db, schedule, night_hours=night_hours_rd):
+def check_fairness(db, schedule, night_hours=NIGHT_HOURS):
     # Init hours_served, night_hours_served, score_value(score = (hours_served-night_hours_served) + (night_hours_served)*1.5
     score_value = {}
     night_hours_served = {}
@@ -983,7 +1039,7 @@ def verify(cfg_people_names, schedule):
                     last_served_hour = last_served[name]
                     if last_served_hour != -1:
                         diff = hour - last_served_hour - 1
-                        expected_ttr = TTR_NIGHT if last_served_hour in night_hours_rd else TTR_DAY
+                        expected_ttr = TTR_NIGHT if last_served_hour in NIGHT_HOURS else TTR_DAY
                         if diff < expected_ttr and diff > 0:
                             error(
                                 f"Poor {name} did not get his {expected_ttr} hour rest (served at {last_served_hour}, then at {hour})")
