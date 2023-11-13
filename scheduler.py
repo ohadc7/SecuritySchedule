@@ -3,7 +3,8 @@
 
 # TODO:
 #######
-# - Fix bug in accumulation of total_hours, use it in choose_team_member()
+# - Do we really need update_db_with_prev_schedule? Isn't the data already inside use_db?
+# - Use total_hours in choose_team_member()
 # - Debug Example.xlsx - see 'כב'
 # - Allow running without generation, only analysis of the existing schedule
 # - Allow running without --prev
@@ -298,13 +299,26 @@ class UsersDB:
             error(f"Cannot delete user '{name}', does not exist in UsersDB")
 
 
-    def update_user(self, name, position, is_night):
+    # When user is chosen, update its personal data
+    # Note: this function is called both when building the new schedule,
+    # and when later analyzing this schedule as prev_schedule
+    # To avoid counting the same shift twice, use bool update_total flag
+    def update_user(self, name, position, is_night, update_total=0):
         self.set_ttr(name, is_night)
         self.set_prev_position(name, position)
-        self.increment_total_hours(name)
+        if update_total:
+            self.increment_total_hours(name)
 
     def is_empty(self):
         return (len(self.users_data) == 0)
+
+
+    # Return dict [name --> total_hours
+    def get_total_hours(self):
+        dict_total_hours = {}
+        for name in self.users_data.keys():
+            dict_total_hours[name] = self.users_data[name].total
+        return dict_total_hours
 
 
     # Get list of names that recently served at the specified position
@@ -767,9 +781,11 @@ def build_single_day_schedule(curr_date_str, prev_schedule, users_db, cfg, day_f
             schedule[hour].append(team)
             prev_team[position] = team
 
-            # Even if there was no swap, the chosen team should get its time to rest
+            # Update user personal data
+            # Note: update total_hours only for the last day
+            update_total = 1 if day_from_beginning == DAYS_TO_PLAN-1 else 0
             for name in team:
-                users_db.update_user(name, position, is_night)
+                users_db.update_user(name, position, is_night, update_total=update_total)
 
         # End of hour - update TTR
         users_db.decrement_ttr()
@@ -845,7 +861,7 @@ def update_db_with_prev_schedule(users_db, schedule):
                         night_list.append(name)
 
                 # Update user_db
-                users_db.update_user(name, position, is_night)
+                users_db.update_user(name, position, is_night, update_total=1)
 
         # Update TTS (for each hour, not for each position)
         users_db.decrement_ttr()
@@ -954,49 +970,38 @@ def color_column(worksheet, index, color):
 # Should be incremented for the first (CFG) prev_schedule + all the new ones
 def check_fairness(users_db, schedule, night_hours=NIGHT_HOURS):
 
-    # Init hours_served, night_hours_served, score_value(score = (hours_served-night_hours_served) + (night_hours_served)*1.5
-    score_value = {}
-    night_hours_served = {}
-    hours_served = {}
+    # Init night_hours_served
+    user_night_hours = {}
     for name in users_db.valid_names:
-        score_value[name] = 0
-        night_hours_served[name] = 0
-        hours_served[name] = 0
+        user_night_hours[name] = 0
 
-    # Calculate hours_served, night_hours_served
-    # The hour variable runs from 0 to len(schedule),
-    # modulo 24 the hour variable will give the actual hour value in the day so you can know
-    # if the hour is in the night
-    for hour in range(len(schedule)):
-        for team in schedule[hour]:
+    # Calculate night_hours_served
+    for absolute_hour in range(len(schedule)):
+        for team in schedule[absolute_hour]:
             for name in team:
-                if hour % 24 in night_hours and name in night_hours_served:
-                    night_hours_served[name] += 1
-                if name != 'nan' and name in hours_served:
-                    hours_served[name] += 1
+                if absolute_hour % 24 in night_hours and name in user_night_hours:
+                    user_night_hours[name] += 1
 
-    # Compare to total_hours inside the DB
-    # for name in hours_served.keys():
-    #     if hours_served[name] != users_db.users_data[name].total:
-    #         error(f"For user {name}, calculated total {hours_served[name]} != accumulated total {users_db.users_data[name].total}")
+    # Get total_hours
+    user_total_hours = users_db.get_total_hours()
 
     # Report
     print_delimiter_and_str("Check fairness")
 
     # Calculating the most hours served to print it in line
-    name_of_the_most_hours_served = max(hours_served, key=lambda k: hours_served[k])
-    most_hours_served = hours_served[name_of_the_most_hours_served]
+    name_of_the_most_hours_served = max(user_total_hours, key=lambda k: user_total_hours[k])
+    most_hours_served = user_total_hours[name_of_the_most_hours_served]
 
     print_delimiter()
-    for name in hours_served:
-        print(f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(hours_served[name]).ljust(4)}\t{('*' * hours_served[name]).ljust(most_hours_served+5)}"
-              f" Night shifts: {str(int(night_hours_served[name]/2)).ljust(4)}" + ('*' * int(night_hours_served[name]/2)))
+    for name in user_total_hours:
+        print(f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(user_total_hours[name]).ljust(4)}\t{('*' * user_total_hours[name]).ljust(most_hours_served+5)}"
+              f" Night shifts: {str(int(user_night_hours[name]/2)).ljust(4)}" + ('*' * int(user_night_hours[name]/2)))
 
     # Calculate average, night average
-    total = sum(value for value in hours_served.values())
-    average = int(total / len(hours_served))
-    night_hours_total = sum(value2 for value2 in night_hours_served.values())
-    night_hours_average = int(night_hours_total / len(night_hours_served))
+    total = sum(value for value in user_total_hours.values())
+    average = int(total / len(user_total_hours))
+    night_hours_total = sum(value2 for value2 in user_night_hours.values())
+    night_hours_average = int(night_hours_total / len(user_night_hours))
     night_shifts_average = int(night_hours_average/2)
 
     # Print average
@@ -1007,13 +1012,13 @@ def check_fairness(users_db, schedule, night_hours=NIGHT_HOURS):
     print_delimiter()
 
     # Adding standard_deviation
-    standard_deviation_value = standard_deviation("Total", hours_served, average, True)
-    standard_deviation_value = standard_deviation("Night", night_hours_served, night_hours_average, True)
+    standard_deviation_value = standard_deviation("Total", user_total_hours, average, True)
+    standard_deviation_value = standard_deviation("Night", user_night_hours, night_hours_average, True)
     print_delimiter()
 
     if (GRAPH):
         # Red line - Average, Green dotted lines - Average ± Standard Deviation, Blue dots - People
-        make_graph(night_hours_served, hours_served, average, night_hours_average, standard_deviation_value)
+        make_graph(user_night_hours, user_total_hours, average, night_hours_average, standard_deviation_value)
 
     return 1
 
