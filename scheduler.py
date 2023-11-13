@@ -3,15 +3,11 @@
 
 # TODO:
 #######
-# - Make class: TtrDB
+# - Fix bug in accumulation of total_hours, use it in choose_team_member()
+# - Debug Example.xlsx - see 'כב'
+# - Allow running without generation, only analysis of the existing schedule
 # - Allow running without --prev
 # - Add check for the leftest column - error if not starts with 0:00 or other way incorrect
-# - Allow running without generation, only analysis of the existing schedule
-# - For better distribution between positions:
-#   Consider having DB, per position, of people recently served in this position
-#   When assigning for position, out of available people list, lower weigth to the ones recently served
-# - Thinking of adding post processing
-# - Transforming the graph into a heat map with night values or changing the graph to columns graph
 
 # Nadav:
 ########
@@ -21,28 +17,21 @@
 # Improve verify() function - currently checks that TTR is observed, check also that not two nights in a row
 # Idea, because of the shuffling in the algorithm you can run it a few times and get different results.
 # we could simply run it 50 times in a loop and take the schedule with the best standard deviation.
+# Transforming the graph into a heat map with night values or changing the graph to columns graph
 
 # Later:
 ########
 # - Errors should be warnings by default, error for developer (controlled with --arg)
 # - Consider: MAX_TTR = MIN_TTR * 2 - 1
 # - Consider: post-processing to fix fairness
-# - Consider making the TTR part of the CFG (add column)
-# - Another way - add column 'weight' fo position CFG
-#   Can split position into positions (night, day), each with different weight
 # - Allow planning for hour range (can help planning for Shabbat)
 # - Support list of people per position
 # - Improve XLS parsing (read once, all sheets, then parse)
-# - Run fairness check on range of sheets, possibly without generating
 # - Consider:
 #   - Weight per position, per hour
 #   - Read from XLS, same as team_size or action
 #   - Use weight instead of TTR in set_ttr()
-#   - Flusk? Pygame?
-# - Make object-oriented:
-#   Class ttr_db
-#   Class schedule
-#   Etc.
+
 
 import sys
 import os
@@ -94,12 +83,9 @@ NIGHT_HOURS = [1, 2, 3, 4]
 NONE = 0;
 SWAP = 1;
 RESIZE = 2
+
 # Colors
-PINK = 0;
-BLUE = 1;
-GREEN = 2;
-YELLOW = 3;
-PURPLE = 4
+COLOR_CODES = {'pink': "FFC0CB", 'blue': "ADD8E6", 'green': "98FB98", 'yellow': "FFFFE0", 'purple': "E6E6FA"}
 
 
 ##################################################################################
@@ -807,44 +793,6 @@ def output_schedule(schedule, date_str, cfg_position_names):
 
 
 ##################################################################################
-# DB utils
-
-# Set TTR for name
-def set_ttr(hour, name, db):
-    # Skip people that exist in prev_schedule, but not in current "List of people"
-    if not name in db:
-        warning(f"{name} exists in schedule, but not in 'List of people'")
-        return
-
-    # Note: need to handle a special case where Moshe starts shift at night, continues at day
-    # For example, shift of 03:00 - 07:00
-    # We detect such case when the previous TTR value ==  TTR_NIGHT+1
-    # In this case, restore NIGHT_TTR+1
-    if db[name] == TTR_NIGHT:
-        db[name] += 1
-        return
-
-    # Normal case
-    if hour in NIGHT_HOURS:
-        db[name] = TTR_NIGHT + 1
-    else:
-        db[name] = TTR_DAY + 1
-
-
-# For each person, decrement the remaining "time to rest"
-def decrement_ttr(db):
-    for name in db:
-        db[name] -= 1
-
-
-# Print DB
-def print_db(header, db):
-    print(header)
-    for name in db:
-        print(f"{name.ljust(COLUMN_WIDTH)}{db[name]}")
-
-
-##################################################################################
 # Getting the lowest items and keys of the values for an "n" amount of numbers above the lowest ttr
 # Returns the names with ttr in [TTR, TTR+1, TTR+2, ... TTR+n-1]
 def get_list_of_lowest_ttrs(users_db):
@@ -966,11 +914,11 @@ def write_schedule_to_xls(schedule, sheet_name, cfg_position_names):
 ##################################################################################
 # Color the worksheet
 def color_worksheet(worksheet):
-    color_column(worksheet, 2, PINK)
-    color_column(worksheet, 3, GREEN)
-    color_column(worksheet, 4, YELLOW)
-    color_column(worksheet, 5, BLUE)
-    color_column(worksheet, 6, PURPLE)
+    color_column(worksheet, 2, 'pink')
+    color_column(worksheet, 3, 'green')
+    color_column(worksheet, 4, 'yellow')
+    color_column(worksheet, 5, 'blue')
+    color_column(worksheet, 6, 'purple')
 
     for cell in worksheet[1]:
         cell.font = Font(bold=True)
@@ -980,18 +928,11 @@ def color_worksheet(worksheet):
 # Add color to column
 def color_column(worksheet, index, color):
     # Create a PatternFill object with the required color
-    if color == PINK:
-        fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
-    elif color == BLUE:
-        fill = PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid")
-    elif color == GREEN:
-        fill = PatternFill(start_color="98FB98", end_color="98FB98", fill_type="solid")
-    elif color == YELLOW:
-        fill = PatternFill(start_color="FFFFE0", end_color="FFFFE0", fill_type="solid")
-    elif color == PURPLE:
-        fill = PatternFill(start_color="E6E6FA", end_color="E6E6FA", fill_type="solid")
+    if color in COLOR_CODES.keys():
+        color_code = COLOR_CODES[color]
+        fill = PatternFill(start_color=color_code, end_color=color_code, fill_type="solid")
     else:
-        error(f"Undefined color {color}")
+        error(f"Undefined color '{color}'")
 
     # Get data from the worksheet
     data = []
