@@ -442,7 +442,7 @@ def extract_column_from_sheet(sheet_name, column_name):
 
 
 # Turning type [13/2 15:00-16:00] to hours in schedule
-def parse_hours(single_person_time_off, prev_date_str):
+def parse_hours(name, single_person_time_off, prev_date_str):
     current_date = get_one_day_ahead(prev_date_str)
     hour_values = []
     current_day, current_month = map(int, current_date.split('/'))
@@ -483,6 +483,10 @@ def parse_hours(single_person_time_off, prev_date_str):
                     # Splitting minutes and hour (we do not support minutes currently)
                     start_hour, start_minute = map(int, start_time.split(':'))
                     end_hour, end_minute = map(int, end_time.split(':'))
+
+                    # Sanity
+                    if start_hour > end_hour:
+                        error(f"For {name} time off, start hour > end hour. This is not supported. Note: midnight should be written as 24:00")
 
                     # Adding the hours to the hours value
                     # Supporting just getting 11/5
@@ -525,7 +529,7 @@ def extract_personal_constraints(prev_date_str, column_name):
             personal_list_of_hours[name] = []
         else:
             # Adding the the name the value that is a list with the hours they cant serve
-            personal_list_of_hours[name] = parse_hours(personal_str[name], prev_date_str)
+            personal_list_of_hours[name] = parse_hours(name, personal_str[name], prev_date_str)
 
     return personal_list_of_hours
 
