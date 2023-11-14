@@ -445,22 +445,6 @@ def parse_command_line_arguments():
 
 
 ##################################################################################
-# Build DB from "List of people"
-# Key:   name
-# Value: remaining time to rest (TTR) - set to 0
-def init_ttr_db():
-    # Get list of names from XLS
-    names = extract_column_from_sheet("List of people", "People")
-    # Build people DB
-    db = {}
-    for name in names:
-        if type(name) is str:
-            db[name[::-1]] = 0
-
-    return db
-
-
-##################################################################################
 # Extract column from sheet
 def extract_column_from_sheet(sheet_name, column_name):
     df = pd.read_excel(INPUT_FILE_NAME, sheet_name=sheet_name)
