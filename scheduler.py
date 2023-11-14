@@ -3,12 +3,18 @@
 
 # TODO:
 #######
+# - Change the way we treat night shifts:
+#   When there are no people that are available for a night shift,
+#   instead of failing, check everybody's night_hours,
+#   and choose the person with the least night hours until now (and TTR >= 0)
+#   Check if works for night_hours 23-06
 # - Do we really need update_db_with_prev_schedule? Isn't the data already inside use_db?
 # - Use total_hours in choose_team_member()
 # - Debug Example.xlsx - see 'כב'
-# - Allow running without generation, only analysis of the existing schedule
+# - Allow running without generation, only analysis of the existing schedule (multiple prev)
 # - Allow running without --prev
 # - Add check for the leftest column - error if not starts with 0:00 or other way incorrect
+# - Support VIP positions? More general case, everyone should reach any position?
 
 # Nadav:
 ########
@@ -126,7 +132,7 @@ class PositionCfg:
 # User personal data
 ##################################################################################
 class PersonalData:
-    def __init__(self, name="", ttr=0, prev_position=-1, total=0, time_off=[], time_on=[]):
+    def __init__(self, name="", ttr=0, prev_position=-1, total=0, night=0, time_off=[], time_on=[]):
         # User name
         self.name = name
         # Remaining time to rest
@@ -134,13 +140,16 @@ class PersonalData:
         # Last position assigned to User
         self.prev_position = prev_position
         # Total hours served until now
-        self.total = total
+        self.total_hours = total
+        # Night hours served until now
+        self.night_hours = night
         # Availability
         self.time_off = time_off
         self.time_on  = time_on
 
     def print(self):
-        print(f"Name: {self.name.ljust(COLUMN_WIDTH)} TTR = {self.ttr}, prev_position = '{self.prev_position}', total_hours = {self.total}")
+        print(f"Name: {self.name.ljust(COLUMN_WIDTH)} TTR = {self.ttr}, prev_position = '{self.prev_position}', "
+              f"total_hours = {self.total_hours}, night_hours = {self.night_hours}")
         print(f"Time off: {self.time_off}")
         print(f"Time on:  {self.time_on}")
 
@@ -177,10 +186,13 @@ class PersonalData:
         self.prev_position = position
 
     def increment_total_hours(self):
-        self.total += 1
+        self.total_hours += 1
+
+    def increment_night_hours(self):
+        self.night_hours += 1
 
     def copy(self):
-        return PersonalData(self.name, self.ttr, self.prev_position, self.total, self.time_off, self.time_on)
+        return PersonalData(self.name, self.ttr, self.prev_position, self.total_hours, self.night_hours, self.time_off, self.time_on)
 
 
 ##################################################################################
@@ -207,8 +219,7 @@ class UsersDB:
 
     # Print all users data
     def print(self):
-        print_delimiter_and_str("Users DB")
-        print_delimiter()
+        print_header("Users DB")
         print(f"Valid names: {self.valid_names}")
         print_delimiter()
         for name in self.users_data.keys():
@@ -264,8 +275,18 @@ class UsersDB:
             warning(f"Cannot increment total_hours for '{name}', not in 'List of people'")
             return
 
-        # Set prev_position
+        # Increment
         self.users_data[name].increment_total_hours()
+        return
+
+    def increment_night_hours(self, name):
+        # Skip people that exist in prev_schedule, but not in current "List of people"
+        if not name in self.users_data.keys():
+            warning(f"Cannot increment night_hours for '{name}', not in 'List of people'")
+            return
+
+        # Increment
+        self.users_data[name].increment_night_hours()
         return
 
     def is_available(self, name, absolute_hour):
@@ -302,24 +323,32 @@ class UsersDB:
     # When user is chosen, update its personal data
     # Note: this function is called both when building the new schedule,
     # and when later analyzing this schedule as prev_schedule
-    # To avoid counting the same shift twice, use bool update_total flag
-    def update_user(self, name, position, is_night, update_total=0):
+    # To avoid counting the same shift twice, use bool update_hours flag
+    def update_user(self, name, position, is_night, update_hours=0):
         self.set_ttr(name, is_night)
         self.set_prev_position(name, position)
-        if update_total:
+        if update_hours:
             self.increment_total_hours(name)
+            if is_night:
+                self.increment_night_hours(name)
 
     def is_empty(self):
         return (len(self.users_data) == 0)
 
 
-    # Return dict [name --> total_hours
+    # Return dict [name] --> num_of_total_hours
     def get_total_hours(self):
         dict_total_hours = {}
         for name in self.users_data.keys():
-            dict_total_hours[name] = self.users_data[name].total
+            dict_total_hours[name] = self.users_data[name].total_hours
         return dict_total_hours
 
+    # Return dict [name] --> num_of_night_hours
+    def get_night_hours(self):
+        dict_night_hours = {}
+        for name in self.users_data.keys():
+            dict_night_hours[name] = self.users_data[name].night_hours
+        return dict_night_hours
 
     # Get list of names that recently served at the specified position
     def remove_repetative(self, curr_position):
@@ -349,6 +378,10 @@ def print_delimiter_and_str(str):
     print_delimiter()
     print (str)
 
+def print_header(str):
+    print_delimiter()
+    print (str)
+    print_delimiter()
 
 ##################################################################################
 # Functions
@@ -786,10 +819,10 @@ def build_single_day_schedule(curr_date_str, prev_schedule, users_db, cfg, day_f
             prev_team[position] = team
 
             # Update user personal data
-            # Note: update total_hours only for the last day
-            update_total = 1 if day_from_beginning == DAYS_TO_PLAN-1 else 0
+            # Note: update hours only for the last day
+            update_hours = 1 if day_from_beginning == DAYS_TO_PLAN-1 else 0
             for name in team:
-                users_db.update_user(name, position, is_night, update_total=update_total)
+                users_db.update_user(name, position, is_night, update_hours=update_hours)
 
         # End of hour - update TTR
         users_db.decrement_ttr()
@@ -865,7 +898,7 @@ def update_db_with_prev_schedule(users_db, schedule):
                         night_list.append(name)
 
                 # Update user_db
-                users_db.update_user(name, position, is_night, update_total=1)
+                users_db.update_user(name, position, is_night, update_hours=1)
 
         # Update TTS (for each hour, not for each position)
         users_db.decrement_ttr()
@@ -880,8 +913,7 @@ def print_schedule(schedule, schedule_name, cfg_position_names):
     header = "Hour\t"
     for p in range(NUM_OF_POSITIONS):
         header += (cfg_position_names[p]).ljust(COLUMN_WIDTH) + "\t"
-    print_delimiter_and_str(header)
-    print_delimiter()
+    print_header(header)
 
     for hour in range(HOURS_IN_DAY):
         if hour >= len(schedule):
@@ -968,35 +1000,18 @@ def color_column(worksheet, index, color):
 
 ##################################################################################
 # Check fairness
-# FIXME: no need to calculate hours_served, information already exists in users_db
-# FIXME: currently cannot use, because there's a bug in accumulated total,
-# because it is incremented twice: while parsing prev_schedule, while building the new schedule
-# Should be incremented for the first (CFG) prev_schedule + all the new ones
-def check_fairness(users_db, schedule, night_hours=NIGHT_HOURS):
+def check_fairness(users_db, schedule):
 
-    # Init night_hours_served
-    user_night_hours = {}
-    for name in users_db.valid_names:
-        user_night_hours[name] = 0
-
-    # Calculate night_hours_served
-    for absolute_hour in range(len(schedule)):
-        for team in schedule[absolute_hour]:
-            for name in team:
-                if absolute_hour % 24 in night_hours and name in user_night_hours:
-                    user_night_hours[name] += 1
-
-    # Get total_hours
+    # Get served hours
     user_total_hours = users_db.get_total_hours()
-
-    # Report
-    print_delimiter_and_str("Check fairness")
+    user_night_hours = users_db.get_night_hours()
 
     # Calculating the most hours served to print it in line
     name_of_the_most_hours_served = max(user_total_hours, key=lambda k: user_total_hours[k])
     most_hours_served = user_total_hours[name_of_the_most_hours_served]
 
-    print_delimiter()
+    # Report
+    print_header("Check fairness")
     for name in user_total_hours:
         print(f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(user_total_hours[name]).ljust(4)}\t{('*' * user_total_hours[name]).ljust(most_hours_served+5)}"
               f" Night shifts: {str(int(user_night_hours[name]/2)).ljust(4)}" + ('*' * int(user_night_hours[name]/2)))
@@ -1010,9 +1025,9 @@ def check_fairness(users_db, schedule, night_hours=NIGHT_HOURS):
 
     # Print average
     print_delimiter()
-    print(f"Average: {str(average).ljust(COLUMN_WIDTH-3)} served: {str(average).ljust(4)}\t" + ("*" * average).ljust(
-        most_hours_served + 5) + f" Night shifts:"
-                                 f" {str(night_shifts_average).ljust(4)}" + "*" * night_shifts_average)
+    print(f"Average: {str(average).ljust(COLUMN_WIDTH-3)} served: {str(average).ljust(4)}\t" +
+          ("*" * average).ljust(most_hours_served + 5) +
+          f" Night shifts: {str(night_shifts_average).ljust(4)}" + "*" * night_shifts_average)
     print_delimiter()
 
     # Adding standard_deviation
@@ -1254,8 +1269,7 @@ def check_positions(schedule, position_names):
     header_str = "Positions summary".ljust(COLUMN_WIDTH + 18)
     for p in range(NUM_OF_POSITIONS):
         header_str += str(position_names[p]).ljust(15)
-    print_delimiter_and_str(header_str)
-    print_delimiter()
+    print_header(header_str)
 
     # Print summary per person
     for name in time_spent_at_position:
@@ -1371,6 +1385,7 @@ def main():
     # Extract all necessary information from input file
     users_db, prev_schedule, positions_db = parse_input_file(prev_date_str)
 
+
     # Init total new schedule
     total_new_schedule = prev_schedule.copy()
 
@@ -1393,7 +1408,7 @@ def main():
         check_teams(total_new_schedule)
         check_positions(total_new_schedule, positions_db.position_names())
 
-    check_fairness(users_db, total_new_schedule, [23, 0, 1, 2, 3, 4, 5, 6]) #range(0, 7))
+    check_fairness(users_db, total_new_schedule) #, [23, 0, 1, 2, 3, 4, 5, 6]) #range(0, 7))
 
 
 ##################################################################################
