@@ -3,14 +3,13 @@
 
 # TODO:
 #######
+# - Do we really need update_db_with_prev_schedule? The data is already inside users_db
 # - Change the way we treat night shifts:
 #   When there are no people that are available for a night shift,
 #   instead of failing, check everybody's night_hours,
 #   and choose the person with the least night hours until now (and TTR >= 0)
 #   Check if works for night_hours 23-06
-# - Do we really need update_db_with_prev_schedule? Isn't the data already inside use_db?
 # - Use total_hours in choose_team_member()
-# - Debug Example.xlsx - see 'כב'
 # - Allow running without generation, only analysis of the existing schedule (multiple prev)
 # - Allow running without --prev
 # - Add check for the leftest column - error if not starts with 0:00 or other way incorrect
@@ -80,7 +79,8 @@ HOURS_IN_DAY = 24
 COLUMN_WIDTH = 27
 LINE_WIDTH = 10 + NUM_OF_POSITIONS * COLUMN_WIDTH
 
-NIGHT_HOURS = [1, 2, 3, 4]
+NIGHT_HOURS = [23, 0, 1, 2, 3, 4, 5, 6]
+DEEP_NIGHT_HOURS = [1, 2, 3, 4]
 
 ##################################################################################
 # Enums
@@ -324,13 +324,19 @@ class UsersDB:
     # Note: this function is called both when building the new schedule,
     # and when later analyzing this schedule as prev_schedule
     # To avoid counting the same shift twice, use bool update_hours flag
-    def update_user(self, name, position, is_night, update_hours=0):
+    def update_user(self, name, position, hour, update_hours=0):
+        is_night = 1 if hour in NIGHT_HOURS else 0
         self.set_ttr(name, is_night)
         self.set_prev_position(name, position)
         if update_hours:
             self.increment_total_hours(name)
             if is_night:
                 self.increment_night_hours(name)
+            # For DEEP_NIGHT_HOURS, increment more
+            if hour in DEEP_NIGHT_HOURS:
+                self.increment_night_hours(name)
+                self.increment_night_hours(name)
+
 
     def is_empty(self):
         return (len(self.users_data) == 0)
@@ -360,6 +366,23 @@ class UsersDB:
         # Remove these people from the DB
         for name in names_to_delete:
             self.del_user(name)
+
+    # Check if there are no users in the DB
+    def is_empty(self):
+        return not self.users_data.keys()
+
+    # Get user with lowest night_hours
+    def get_user_with_lowest_night_hours(self):
+        if self.is_empty():
+            error("Cannot get user with lowest night_hours, because UserDB is empty")
+
+        night_hours = self.get_night_hours()
+        min_value = min(night_hours.values())
+        all_names_with_min_value = [key for key, value in night_hours.items() if value == min_value]
+        shuffled_list_of_names = random.sample(all_names_with_min_value, len(all_names_with_min_value))
+        name = shuffled_list_of_names[0]
+        return name
+
 
 ##################################################################################
 # Utils
@@ -658,7 +681,13 @@ def choose_team(hour, night_list, users_db, curr_position, team_size, day_from_b
         local_users_db = get_available_users_db(users_db, curr_position, is_night, night_list, real_hour)
 
         # Choose team member
-        name = choose_team_member(local_users_db)
+        if is_night and local_users_db.is_empty():
+            #print("Is night and no users, choose user with the least hight_hours")
+            # Get the DB again, but do not exclude night watchers
+            local_users_db = get_available_users_db(users_db, curr_position, 0, night_list, real_hour)
+            name = local_users_db.get_user_with_lowest_night_hours()
+        else:
+            name = choose_team_member(local_users_db)
 
         # Check for violations
         verify_team_member(name, users_db, is_night, real_hour, night_list)
@@ -695,8 +724,8 @@ def verify_team_member(name, users_db, is_night, absolute_hour, night_list):
         error(message_header+f"has a positive TTR {ttr_db[name]}\n")
     if not users_db.is_available(name, absolute_hour):
         error(message_header+f"should be on vacation (try --shuffle {SHUFFLE_COEFFICIENT+1})\n")
-    if is_night and name in night_list:
-        error(message_header+f"has already served last night")
+    #if is_night and name in night_list:
+    #    warning(message_header+f"has already served last night")
 
     return
 
@@ -806,7 +835,7 @@ def build_single_day_schedule(curr_date_str, prev_schedule, users_db, cfg, day_f
             # Note: update hours only for the last day
             update_hours = 1 if day_from_beginning == DAYS_TO_PLAN-1 else 0
             for name in team:
-                users_db.update_user(name, position, is_night, update_hours=update_hours)
+                users_db.update_user(name, position, hour, update_hours=update_hours)
 
         # End of hour - update TTR
         users_db.decrement_ttr()
@@ -882,7 +911,7 @@ def update_db_with_prev_schedule(users_db, schedule):
                         night_list.append(name)
 
                 # Update user_db
-                users_db.update_user(name, position, is_night, update_hours=1)
+                users_db.update_user(name, position, hour, update_hours=1)
 
         # Update TTS (for each hour, not for each position)
         users_db.decrement_ttr()
@@ -988,40 +1017,59 @@ def check_fairness(users_db, schedule):
 
     # Get served hours
     user_total_hours = users_db.get_total_hours()
-    user_night_hours = users_db.get_night_hours()
+    #user_night_hours = users_db.get_night_hours()
+
+    user_deep_night_hours = {}
+    user_night_hours = {}
+    for name in users_db.valid_names:
+        user_deep_night_hours[name] = 0
+        user_night_hours[name] = 0
+
+        # Calculate night_hours_served
+    for absolute_hour in range(len(schedule)):
+        for team in schedule[absolute_hour]:
+            for name in team:
+                if absolute_hour % 24 in DEEP_NIGHT_HOURS and name in user_deep_night_hours:
+                    user_deep_night_hours[name] += 1
+                if absolute_hour % 24 in NIGHT_HOURS and name in user_night_hours:
+                    user_night_hours[name] += 1
 
     # Calculating the most hours served to print it in line
-    name_of_the_most_hours_served = max(user_total_hours, key=lambda k: user_total_hours[k])
-    most_hours_served = user_total_hours[name_of_the_most_hours_served]
+    #name_of_the_most_hours_served = max(user_total_hours, key=lambda k: user_total_hours[k])
+    #max_total_hours = user_total_hours[name_of_the_most_hours_served]
+    max_total_hours = max(user_total_hours.values())
+    max_night_hours = max(user_night_hours.values()) + 4
 
     # Report
     print_header("Check fairness")
     for name in user_total_hours:
-        print(f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(user_total_hours[name]).ljust(4)}\t{('*' * user_total_hours[name]).ljust(most_hours_served+5)}"
-              f" Night shifts: {str(int(user_night_hours[name]/2)).ljust(4)}" + ('*' * int(user_night_hours[name]/2)))
+        print(f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(user_total_hours[name]).ljust(4)}\t{('*' * user_total_hours[name]).ljust(max_total_hours+5)}"
+              f" Night: {str(int(user_night_hours[name])).ljust(4)}" + ('*' * int(user_night_hours[name])).ljust(max_night_hours) +
+              f" Deep:  {str(int(user_deep_night_hours[name])).ljust(4)}" + ('*' * int(user_deep_night_hours[name])).ljust(max_night_hours)
+              )
 
     # Calculate average, night average
-    total = sum(value for value in user_total_hours.values())
-    average = int(total / len(user_total_hours))
-    night_hours_total = sum(value2 for value2 in user_night_hours.values())
-    night_hours_average = int(night_hours_total / len(user_night_hours))
-    night_shifts_average = int(night_hours_average/2)
+    total_hours_average = int(sum(user_total_hours.values()) / len(user_total_hours))
+    night_hours_average = int(sum(user_night_hours.values()) / len(user_night_hours))
+    deep_hours_average  = int(sum(user_deep_night_hours.values()) / len(user_deep_night_hours))
 
     # Print average
     print_delimiter()
-    print(f"Average: {str(average).ljust(COLUMN_WIDTH-3)} served: {str(average).ljust(4)}\t" +
-          ("*" * average).ljust(most_hours_served + 5) +
-          f" Night shifts: {str(night_shifts_average).ljust(4)}" + "*" * night_shifts_average)
+    print(f"Average: {str(total_hours_average).ljust(COLUMN_WIDTH-3)} served: {str(total_hours_average).ljust(4)}\t" +
+          ("*" * total_hours_average).ljust(max_total_hours + 5) +
+          f" Night: {str(night_hours_average).ljust(4)}" + ("*" * night_hours_average).ljust(max_night_hours) +
+          f" Deep:  {str(deep_hours_average).ljust(4)}" + ("*" * deep_hours_average).ljust(max_night_hours))
+
     print_delimiter()
 
     # Adding standard_deviation
-    standard_deviation_value = standard_deviation("Total", user_total_hours, average, True)
+    standard_deviation_value = standard_deviation("Total", user_total_hours, total_hours_average, True)
     standard_deviation_value = standard_deviation("Night", user_night_hours, night_hours_average, True)
     print_delimiter()
 
     if (GRAPH):
         # Red line - Average, Green dotted lines - Average ± Standard Deviation, Blue dots - People
-        make_graph(user_night_hours, user_total_hours, average, night_hours_average, standard_deviation_value)
+        make_graph(user_night_hours, user_total_hours, total_hours_average, night_hours_average, standard_deviation_value)
 
     return 1
 
@@ -1247,7 +1295,7 @@ def check_positions(schedule, position_names):
                 per_person_prev_position[name][hour_idx] = hour
 
     if warn_cnt > 5:
-        error(f"Got too many repetitions {warn_cnt}")
+        warning(f"Got too many repetitions {warn_cnt}")
 
     # Print header (with position names)
     header_str = "Positions summary".ljust(COLUMN_WIDTH + 18)
