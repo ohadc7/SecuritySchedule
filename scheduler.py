@@ -1078,7 +1078,7 @@ def check_fairness(users_db, schedule):
 def standard_deviation(header_str, hours_served, average, do_print):
     # FIXME: bug in this function, needs debug
     # Looks like it's called twice, with different types of DB
-    #return 0
+
     # In order to calculate the standard deviation you need to calculate the sum of the
     # differences between all the people and the average to the power of 2 and then divide
     # that by the number of people and then square root all of that
@@ -1089,6 +1089,7 @@ def standard_deviation(header_str, hours_served, average, do_print):
         #print(f"name: {name}")
         sum_of_delta_hours += math.pow(average - hours_served[name], 2)
     standard_deviation_value = math.sqrt(sum_of_delta_hours / number_of_people)
+
     # If you want to print set do_print to True
     if (do_print):
         print(f"{header_str} standard deviation:" + " " + str(round(standard_deviation_value, 4)).ljust(28) + (
@@ -1099,28 +1100,24 @@ def standard_deviation(header_str, hours_served, average, do_print):
 ##################################################################################
 # Making graph for night_hours
 def make_graph(night_hours_served, hours_served, average, night_hours_average, standard_deviation_value):
-    # Importing inside to avoid errors
+    # Imports (inside the function in order to not make errors for users
     import matplotlib.pyplot as plt
     import numpy as np
 
-    # Init np arrays
+    # Init values
+    night_hours_served_values = np.array(list(night_hours_served.values()))
     y_values = np.array([])
     x_values = np.array([])
-    y_values_above_average = np.array([])
-    x_values_above_average = np.array([])
     x_value = 1
 
-    # For loop appending the needed values
+    # Creating an np array for the graph
     for name in hours_served:
         y_value = hours_served[name]
         y_values = np.append(y_values, y_value)
         x_values = np.append(x_values, x_value)
-        if (average + standard_deviation_value < y_value or y_value < average - standard_deviation_value):
-            y_values_above_average = np.append(y_values_above_average, y_value)
-            x_values_above_average = np.append(x_values_above_average, x_value)
         x_value += 1
 
-    # Making lines and plotting points
+    # Calculating relevant values for the graph
     y_value_average = np.array([average, average])
     x_value_average = np.array([0, x_value])
     y_value_standard_deviation = np.array([average + standard_deviation_value, average + standard_deviation_value])
@@ -1128,17 +1125,26 @@ def make_graph(night_hours_served, hours_served, average, night_hours_average, s
     negative_y_value_standard_deviation = np.array(
         [average - standard_deviation_value, average - standard_deviation_value])
     negative_x_value_standard_deviation = np.array([0, x_value])
-    plt.plot(x_value_standard_deviation, y_value_standard_deviation, color='green', linestyle='--', linewidth=1.5)
+
+    # Plotting points with color according to their night_hour values
+    plt.scatter(x_values, y_values, c=night_hours_served_values, cmap='plasma', linewidths=1)
+
+    # Add color bar
+    color_bar = plt.colorbar()
+    color_bar.set_label('Night Hours Served')
+
+    # Plotting all lines
+    plt.plot(x_value_standard_deviation, y_value_standard_deviation, color='green', linestyle='--', linewidth=1.5, label="Avg ± SD ")
     plt.plot(negative_x_value_standard_deviation, negative_y_value_standard_deviation, color='green', linestyle='--',
              linewidth=1.5)
-    plt.plot(x_value_average, y_value_average, color='red')
-    plt.scatter(x_values, y_values)
-    plt.scatter(x_values_above_average, y_values_above_average, color='red')
+    plt.plot(x_value_average, y_value_average, color='blue', label='Avg')
+
+    # Adding text
     plt.title('Hours Served Graph')
     plt.xlabel('Serial Number')
     plt.ylabel('Hours Served')
+    plt.legend()
     plt.show()
-
 
 ##################################################################################
 # Verify result
@@ -1318,21 +1324,20 @@ def check_positions(schedule, position_names):
     print_delimiter_and_str("Average:".ljust(COLUMN_WIDTH + 18) + average_str)
 
     # Print standard deviation
-    # FIXME: fails, needs debug
-    # hours_in_position = []
-    # standard_deviation_value_str = ""
-    # # Getting hours_in_position
-    # for position in range(NUM_OF_POSITIONS):
-    #     for name in time_spent_at_position:
-    #         hours_in_position.append(time_spent_at_position[name][position])
-    #
-    #     for k in range(len(position_average_list)):
-    #         standard_deviation_value = standard_deviation(hours_in_position, position_average_list[k], False)
-    #     standard_deviation_value_str += str(standard_deviation_value).ljust(15)
-    #
-    #     hours_in_position = []
-    #
-    # print_delimiter_and_str("Standard Deviation:".ljust(COLUMN_WIDTH + 18) + standard_deviation_value_str)
+    hours_in_position = []
+    standard_deviation_value_str = ""
+    # Getting hours_in_position
+    for position in range(NUM_OF_POSITIONS):
+        for name in time_spent_at_position:
+             hours_in_position.append(time_spent_at_position[name][position])
+
+        for k in range(len(position_average_list)):
+             standard_deviation_value = standard_deviation("", hours_in_position, position_average_list[k], False)
+        standard_deviation_value_str += str(standard_deviation_value).ljust(15)
+
+        hours_in_position = []
+
+    print_delimiter_and_str("Standard Deviation:".ljust(COLUMN_WIDTH + 18) + standard_deviation_value_str)
 
 
 ##################################################################################
