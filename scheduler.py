@@ -3,12 +3,6 @@
 
 # TODO:
 #######
-# - Do we really need update_db_with_prev_schedule? The data is already inside users_db
-# - Change the way we treat night shifts:
-#   When there are no people that are available for a night shift,
-#   instead of failing, check everybody's night_hours,
-#   and choose the person with the least night hours until now (and TTR >= 0)
-#   Check if works for night_hours 23-06
 # - Use total_hours in choose_team_member()
 # - Allow running without generation, only analysis of the existing schedule (multiple prev)
 # - Allow running without --prev
@@ -324,18 +318,17 @@ class UsersDB:
     # Note: this function is called both when building the new schedule,
     # and when later analyzing this schedule as prev_schedule
     # To avoid counting the same shift twice, use bool update_hours flag
-    def update_user(self, name, position, hour, update_hours=0):
+    def update_user(self, name, position, hour):
         is_night = 1 if hour in NIGHT_HOURS else 0
         self.set_ttr(name, is_night)
         self.set_prev_position(name, position)
-        if update_hours:
-            self.increment_total_hours(name)
-            if is_night:
-                self.increment_night_hours(name)
-            # For DEEP_NIGHT_HOURS, increment more
-            if hour in DEEP_NIGHT_HOURS:
-                self.increment_night_hours(name)
-                self.increment_night_hours(name)
+        self.increment_total_hours(name)
+        if is_night:
+            self.increment_night_hours(name)
+        # For DEEP_NIGHT_HOURS, increment more
+        if hour in DEEP_NIGHT_HOURS:
+            self.increment_night_hours(name)
+            self.increment_night_hours(name)
 
 
     def is_empty(self):
@@ -802,9 +795,12 @@ def build_single_day_schedule(curr_date_str, prev_schedule, users_db, cfg, day_f
     # FIXME: use [hour-1]?
     prev_team = [[] for _ in range(NUM_OF_POSITIONS)]
 
-    # Get TTR information from the previous schedule
-    night_list = update_db_with_prev_schedule(users_db, prev_schedule)
+    # Note: update DB only for the first day
+    # For other days, DB is updated while building
+    update_db = 1  if day_from_beginning == 0 else 0
 
+    # Get list of night watchers information from the previous schedule
+    night_list = get_night_list(users_db, prev_schedule, update_db)
 
     # For each hour
     for hour in range(HOURS_IN_DAY):
@@ -832,10 +828,8 @@ def build_single_day_schedule(curr_date_str, prev_schedule, users_db, cfg, day_f
             prev_team[position] = team
 
             # Update user personal data
-            # Note: update hours only for the last day
-            update_hours = 1 if day_from_beginning == DAYS_TO_PLAN-1 else 0
             for name in team:
-                users_db.update_user(name, position, hour, update_hours=update_hours)
+                users_db.update_user(name, position, hour)
 
         # End of hour - update TTR
         users_db.decrement_ttr()
@@ -890,9 +884,9 @@ def get_list_of_lowest_ttrs(users_db):
 
 
 ##################################################################################
-# Update TTR DB with previous schedule
-# Result: DB, list
-def update_db_with_prev_schedule(users_db, schedule):
+# Get list of night watchers
+# Optionally update the DB
+def get_night_list(users_db, schedule, update_db=0):
     # Init
     night_list = []
 
@@ -911,10 +905,12 @@ def update_db_with_prev_schedule(users_db, schedule):
                         night_list.append(name)
 
                 # Update user_db
-                users_db.update_user(name, position, hour, update_hours=1)
+                if update_db:
+                    users_db.update_user(name, position, hour)
 
         # Update TTS (for each hour, not for each position)
-        users_db.decrement_ttr()
+        if update_db:
+            users_db.decrement_ttr()
 
     return night_list
 
@@ -1049,9 +1045,9 @@ def check_fairness(users_db, schedule):
               )
 
     # Calculate average, night average
-    total_hours_average = int(sum(user_total_hours.values()) / len(user_total_hours))
-    night_hours_average = int(sum(user_night_hours.values()) / len(user_night_hours))
-    deep_hours_average  = int(sum(user_deep_night_hours.values()) / len(user_deep_night_hours))
+    total_hours_average = round(sum(user_total_hours.values()) / len(user_total_hours))
+    night_hours_average = round(sum(user_night_hours.values()) / len(user_night_hours))
+    deep_hours_average  = round(sum(user_deep_night_hours.values()) / len(user_deep_night_hours))
 
     # Print average
     print_delimiter()
@@ -1422,7 +1418,6 @@ def main():
     # Extract all necessary information from input file
     users_db, prev_schedule, positions_db = parse_input_file(prev_date_str)
 
-
     # Init total new schedule
     total_new_schedule = prev_schedule.copy()
 
@@ -1445,7 +1440,7 @@ def main():
         check_teams(total_new_schedule)
         check_positions(total_new_schedule, positions_db.position_names())
 
-    check_fairness(users_db, total_new_schedule) #, [23, 0, 1, 2, 3, 4, 5, 6]) #range(0, 7))
+    check_fairness(users_db, total_new_schedule)
 
 
 ##################################################################################
