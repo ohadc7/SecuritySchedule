@@ -64,6 +64,7 @@ PRINT_STATISTICS = 0
 GRAPH = 0
 DO_WRITE = 0
 INPUT_FILE_NAME = ""
+BY_SCORE = 0
 
 ##################################################################################
 # Constants
@@ -425,6 +426,7 @@ def parse_command_line_arguments():
                         help=f"Shuffle coefficient. Default is 4. Higher value gives more randomization, may reduce fairness for short runs")
     parser.add_argument("--night_first", type=int, metavar='H0', help="First hour of the night (must be after midnight)")
     parser.add_argument("--night_last",  type=int, metavar='H1', help="Last hour of the night")
+    parser.add_argument("--by_score", action="store_true", help="Using score(day_time_served + night_time_served*1.5) to assume positions")
 
 
     # Parse the command-line arguments
@@ -451,6 +453,7 @@ def parse_command_line_arguments():
     if args.night_first is not None:
         global NIGHT_HOURS;
         NIGHT_HOURS = range(args.night_first, args.night_last);
+    if args.by_score:   global BY_SCORE;     BY_SCORE = args.by_score
 
     # Sanity checks
     if not os.path.exists(args.file_name):                    error(f"File {args.file_name} does not exist.")
@@ -700,12 +703,30 @@ def choose_team_member(users_db):
     # (TTR, TTR+1, ... , TTR+SHUFFLE_COEFFICIENT-1)
     all_names_with_lowest_ttr = get_list_of_lowest_ttrs(users_db)
 
+    # Get all names with lowest score if setting is set to true
+    if(BY_SCORE):
+        all_names_with_lowest_ttr = get_list_of_lowest_score(users_db, all_names_with_lowest_ttr)
     # Choose random name
     shuffled_list_of_names = random.sample(all_names_with_lowest_ttr, len(all_names_with_lowest_ttr))
 
     name = shuffled_list_of_names[0]
+
     return name
 
+##################################################################################
+# Gets the name with the lowest score out of the names with the lowest ttr
+def get_list_of_lowest_score(users_db, all_names_with_lowest_ttr):
+    min_score = 1000
+    for i in range(len(all_names_with_lowest_ttr)):
+        # Calculating score (day_hours + night_hours*1.5
+        score = (users_db.users_data[all_names_with_lowest_ttr[i]].total_hours - users_db.users_data[all_names_with_lowest_ttr[i]].night_hours) + users_db.users_data[all_names_with_lowest_ttr[i]].night_hours*1.5
+        # Getting the minimum score
+        if score < min_score:
+            min_score = score
+            name = all_names_with_lowest_ttr[i]
+
+    # Returning in list because of line 712
+    return [name]
 
 ##################################################################################
 # Check chosen team member for violations
@@ -1059,15 +1080,15 @@ def check_fairness(users_db, schedule):
     print_delimiter()
 
     # Adding standard_deviation
-    standard_deviation_value = standard_deviation("Total", user_total_hours, total_hours_average, True)
-    standard_deviation_value = standard_deviation("Night", user_night_hours, night_hours_average, True)
+    standard_deviation_value_day = standard_deviation("Total", user_total_hours, total_hours_average, True)
+    standard_deviation_value_night = standard_deviation("Night", user_night_hours, night_hours_average, True)
     print_delimiter()
 
     if (GRAPH):
         # Red line - Average, Green dotted lines - Average ± Standard Deviation, Blue dots - People
-        make_graph(user_night_hours, user_total_hours, total_hours_average, night_hours_average, standard_deviation_value)
+        make_graph(user_night_hours, user_total_hours, total_hours_average, night_hours_average, standard_deviation_value_day)
 
-    return 1
+    return standard_deviation_value_day + standard_deviation_value_night
 
 
 ##################################################################################
@@ -1440,7 +1461,8 @@ def main():
         check_teams(total_new_schedule)
         check_positions(total_new_schedule, positions_db.position_names())
 
-    check_fairness(users_db, total_new_schedule)
+    # Added for future use
+    total_score = check_fairness(users_db, total_new_schedule)
 
 
 ##################################################################################
