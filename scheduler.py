@@ -65,6 +65,7 @@ GRAPH = 0
 DO_WRITE = 0
 INPUT_FILE_NAME = ""
 BY_SCORE = 0
+INVERT_STRINGS = 1
 
 ##################################################################################
 # Constants
@@ -427,7 +428,7 @@ def parse_command_line_arguments():
     parser.add_argument("--night_first", type=int, metavar='H0', help="First hour of the night (must be after midnight)")
     parser.add_argument("--night_last",  type=int, metavar='H1', help="Last hour of the night")
     parser.add_argument("--by_score", action="store_true", help="Using score(day_time_served + night_time_served*1.5) to assume positions")
-
+    parser.add_argument("--invert", action="store_true", help="Invert strings for STDOUT")
 
     # Parse the command-line arguments
     args = parser.parse_args()
@@ -447,6 +448,7 @@ def parse_command_line_arguments():
     if args.ttrd:        global TTR_DAY;             TTR_DAY = args.ttrd
     if args.graph:       global GRAPH;               GRAPH = args.graph;
     if args.write:       global DO_WRITE;            DO_WRITE = args.write;
+    if args.invert:      global INVERT_STRINGS;      INVERT_STRINGS = 0;
     if args.personal:    global PERSONAL_SCHEDULE;   PERSONAL_SCHEDULE = args.personal;
     if args.shuffle:     global SHUFFLE_COEFFICIENT; SHUFFLE_COEFFICIENT = args.shuffle;
     if args.statistics:  global PRINT_STATISTICS;    PRINT_STATISTICS = args.statistics;
@@ -942,7 +944,7 @@ def print_schedule(schedule, schedule_name, cfg_position_names):
     print_delimiter_and_str(schedule_name)
     header = "Hour\t"
     for p in range(NUM_OF_POSITIONS):
-        header += (cfg_position_names[p]).ljust(COLUMN_WIDTH) + "\t"
+        header += format_str(cfg_position_names[p]) + "\t"
     print_header(header)
 
     for hour in range(HOURS_IN_DAY):
@@ -950,10 +952,16 @@ def print_schedule(schedule, schedule_name, cfg_position_names):
             error("No schedule for hour " + "{:02d}:00".format(hour))
         line_str = "{:02d}:00\t".format(hour)
         for team in schedule[hour]:
-            line_str += ",".join(team).ljust(COLUMN_WIDTH)
+            line_str += format_str(",".join(team))
             line_str += "\t"
         print(line_str)
 
+##################################################################################
+# Format str for output: inverse if needed, constant width
+def format_str(str, width=COLUMN_WIDTH):
+    if INVERT_STRINGS:
+        str = str[::-1]
+    return str.ljust(width)
 
 ##################################################################################
 # Write schedule to XLS file
@@ -1060,7 +1068,7 @@ def check_fairness(users_db, schedule):
     # Report
     print_header("Check fairness")
     for name in user_total_hours:
-        print(f"Name: {name.ljust(COLUMN_WIDTH)} served: {str(user_total_hours[name]).ljust(4)}\t{('*' * user_total_hours[name]).ljust(max_total_hours+5)}"
+        print(f"Name: {format_str(name)} served: {str(user_total_hours[name]).ljust(4)}\t{('*' * user_total_hours[name]).ljust(max_total_hours+5)}"
               f" Night: {str(int(user_night_hours[name])).ljust(4)}" + ('*' * int(user_night_hours[name])).ljust(max_night_hours) +
               f" Deep:  {str(int(user_deep_night_hours[name])).ljust(4)}" + ('*' * int(user_deep_night_hours[name])).ljust(max_night_hours)
               )
@@ -1250,7 +1258,7 @@ def check_teams(schedule):
                 continue
 
             # Team is a list - sort and turn into string
-            sorted_team_str = ",".join(sorted(team))
+            sorted_team_str = format_str(",".join(sorted(team)), 0)
             if sorted_team_str in teams_db.keys():
                 teams_db[sorted_team_str] += 1
             else:
@@ -1323,7 +1331,8 @@ def check_positions(schedule, position_names):
     # Print header (with position names)
     header_str = "Positions summary".ljust(COLUMN_WIDTH + 18)
     for p in range(NUM_OF_POSITIONS):
-        header_str += str(position_names[p]).ljust(15)
+        header_str += format_str(str(position_names[p]), 15)
+        #header_str += str(position_names[p]).ljust(15)
     print_header(header_str)
 
     # Print summary per person
@@ -1331,7 +1340,7 @@ def check_positions(schedule, position_names):
         positions_str = ""
         for p in range(NUM_OF_POSITIONS):
             positions_str += str(time_spent_at_position[name][p]).ljust(15)
-        print(f"Name: {name.ljust(COLUMN_WIDTH)} positions: {positions_str}")
+        print(f"Name: {format_str(name)} positions: {positions_str}")
 
     # Print averages
     average_str = ""
