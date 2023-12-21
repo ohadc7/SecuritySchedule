@@ -206,6 +206,9 @@ class UsersDB:
         for name in valid_names:
             self.users_data[name] = PersonalData(name)
 
+        # Teams DB
+        self.teams_db = TeamsDb();
+
     # Print single user data
     def print_user(self, name):
         if name in self.users_data.keys():
@@ -220,6 +223,7 @@ class UsersDB:
         print_delimiter()
         for name in self.users_data.keys():
             self.users_data[name].print()
+        self.teams_db.print()
 
     # Decrement TTR for all users
     def decrement_ttr(self):
@@ -377,6 +381,54 @@ class UsersDB:
         shuffled_list_of_names = random.sample(all_names_with_min_value, len(all_names_with_min_value))
         name = shuffled_list_of_names[0]
         return name
+
+##################################################################################
+# Hold number of occurrences for each team
+# - Key: string containing sorted list of team members
+# - Value: number of occurrences
+##################################################################################
+class TeamsDb:
+    def __init__(self):
+        # Initialize the members
+        self.name = ""
+        self.db = {}
+
+    def print(self):
+        print_header("Teams occurrence (shifts, not hours)")
+        # Count teams that appear only once
+        # The teams will not be printed, only the number of such teams
+        num_of_unique_teams = 0
+        for team in self.db.keys():
+            # Skip one person team
+            if not "," in team:
+                continue
+            num_of_occurrences = self.db[team]
+            if num_of_occurrences == 1:
+                num_of_unique_teams += 1;
+            else:
+                print(f"{format_str(team)} {format_str(str(num_of_occurrences))}")
+        print(f"Number of unique teams: {num_of_unique_teams}")
+
+    def update_team(self, team):
+        # Ignore empty team
+        if len(team) == 0:
+            return
+
+        # Turn list into string
+        team_str = ",".join(sorted(team))
+
+        # Update DB
+        if team_str in self.db.keys():
+            self.db[team_str] += 1
+        else:
+            self.db[team_str] = 1
+
+    def get_team_occ(self, team):
+        team_str = ",".join(sorted(team))
+        if team_str in self.db.keys():
+            return self.db[team_str]
+        else:
+            return 0
 
 
 ##################################################################################
@@ -666,6 +718,32 @@ def get_action_enum(action_str):
 ##################################################################################
 # Choose team
 def choose_team(hour, night_list, users_db, curr_position, team_size, day_from_beginning):
+    is_night = 1 if hour in NIGHT_HOURS or hour == 23 else  0
+
+    team = choose_team_try(hour, night_list, users_db, curr_position, team_size, day_from_beginning);
+    num_of_occ = users_db.teams_db.get_team_occ(team)
+
+    # Try several options, choose a team that has the least previous occurrences
+    # Currently this feature is disabled (NUM_OF_TRIES = 0), because it didn't improve the results,
+    # probably because at any given time there are not many options to choose from
+    NUM_OF_TRIES = 0
+    for i in range(NUM_OF_TRIES):
+        team_alt = choose_team_try(hour, night_list, users_db, curr_position, team_size, day_from_beginning);
+        num_of_occ_alt = users_db.teams_db.get_team_occ(team_alt)
+        if num_of_occ_alt < num_of_occ:
+            print(f"Replacing team with better ({num_of_occ_alt} < {num_of_occ})")
+            team = team_alt
+            num_of_occ  = num_of_occ_alt
+
+    # Update once team is finalized
+    for name in team:
+        users_db.set_ttr(name, is_night)
+    users_db.teams_db.update_team(team)
+
+    return team
+##################################################################################
+# Try to choose team. Do not update DB, because this is not a final decision
+def choose_team_try(hour, night_list, users_db, curr_position, team_size, day_from_beginning):
     # Init
     team = []
     is_night = 1 if hour in NIGHT_HOURS or hour == 23 else  0
@@ -676,13 +754,13 @@ def choose_team(hour, night_list, users_db, curr_position, team_size, day_from_b
     # Build team
     for i in range(team_size):
         # Build local db - exclude previous night watchers & people not available at this time
-        local_users_db = get_available_users_db(users_db, curr_position, is_night, night_list, real_hour)
+        local_users_db = get_available_users_db(users_db, curr_position, is_night, night_list, real_hour, exclude=team)
 
         # Choose team member
         if is_night and local_users_db.is_empty():
             #print("Is night and no users, choose user with the least hight_hours")
             # Get the DB again, but do not exclude night watchers
-            local_users_db = get_available_users_db(users_db, curr_position, 0, night_list, real_hour)
+            local_users_db = get_available_users_db(users_db, curr_position, 0, night_list, real_hour, exclude=team)
             name = local_users_db.get_user_with_lowest_night_hours()
         else:
             name = choose_team_member(local_users_db)
@@ -692,13 +770,11 @@ def choose_team(hour, night_list, users_db, curr_position, team_size, day_from_b
 
         # Update TTR
         team.append(name)
-        users_db.set_ttr(name, is_night)
 
     return team
 
-
 ##################################################################################
-# Choose a single person ofy of available
+# Choose a single person out of available
 def choose_team_member(users_db):
 
     # Get all names for with <SHUFFLE_COEFFICIENT> TTRs
@@ -748,9 +824,8 @@ def verify_team_member(name, users_db, is_night, absolute_hour, night_list):
 
 ##################################################################################
 # Build ttr_db, but only people available to be chosen
-def get_available_users_db(users_db, curr_position, is_night, night_list, real_hour):
+def get_available_users_db(users_db, curr_position, is_night, night_list, real_hour, exclude=[]):
     # Init
-    available_ttr_db = {}
     available_users_db = UsersDB()
 
     # Build available people DB
@@ -758,6 +833,10 @@ def get_available_users_db(users_db, curr_position, is_night, night_list, real_h
         name = item[0]
         user_data = item[1]
         ttr = user_data.ttr
+
+        # Do not add people on "exclude" list
+        if name in exclude:
+            continue
 
         # If is night, do not add previous night watchers to local_db
         if is_night and name in night_list:
@@ -1469,6 +1548,7 @@ def main():
     if (PRINT_STATISTICS):
         check_teams(total_new_schedule)
         check_positions(total_new_schedule, positions_db.position_names())
+        users_db.teams_db.print()
 
     # Added for future use
     total_score = check_fairness(users_db, total_new_schedule)
